@@ -29,7 +29,7 @@ metadata = Metadata.from_env(env)
 
 # Get demonstrations from DemoStore
 demo_store = DemoStore()
-demos = demo_store.get_demos(metadata, amount=1, frequency=control_frequency)
+demos = demo_store.get_demos(metadata, amount=10, frequency=control_frequency)
 
 # Replay first demonstration
 player = DemoPlayer()

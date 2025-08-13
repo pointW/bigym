@@ -58,9 +58,17 @@ from demonstrations.const import SAFETENSORS_SUFFIX
 
 from dearpygui import dearpygui as dpg
 
-from vr.viewer.control_profiles.control_profile import ControlProfile
-from vr.viewer.control_profiles.h1_floating import H1Floating
-from vr.viewer.control_profiles.universal_floating import UniversalFloating
+try:
+    from vr.viewer.control_profiles.control_profile import ControlProfile
+    from vr.viewer.control_profiles.h1_floating import H1Floating
+    from vr.viewer.control_profiles.universal_floating import UniversalFloating
+    VR_AVAILABLE = True
+except (ImportError, NotImplementedError):
+    # VR support not available (e.g., on macOS)
+    ControlProfile = None
+    H1Floating = None
+    UniversalFloating = None
+    VR_AVAILABLE = False
 
 
 class ReplayMode(Enum):
@@ -126,10 +134,12 @@ ROBOTS: dict[str, Optional[Type[Robot]]] = {
     "Stretch Robot": StretchRobot,
 }
 
-CONTROL_PROFILES: dict[str, Type[ControlProfile]] = {
-    "H1 Upper Body Floating": H1Floating,
-    "Universal": UniversalFloating,
-}
+CONTROL_PROFILES: dict[str, Type[ControlProfile]] = {}
+if VR_AVAILABLE:
+    CONTROL_PROFILES.update({
+        "H1 Upper Body Floating": H1Floating,
+        "Universal": UniversalFloating,
+    })
 
 
 def get_demos_in_dir(directory: Path) -> list[Path]:
