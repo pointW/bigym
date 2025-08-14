@@ -51,12 +51,13 @@ class CartesianActionModeDirect(JointPositionActionMode):
         
         Args:
             floating_base: Whether to enable floating base control
-            floating_dofs: Floating DOFs (defaults to 4 DOF as per paper)
+            floating_dofs: Floating DOFs (defaults to 3 DOF matching JointPositionActionMode)
             position_limits: Min/max limits for end-effector positions
         """
-        # Default to 4 DOF for base as specified in paper
+        # Default to 3 DOF for base to match JointPositionActionMode
+        # The pelvis Z is fixed at 1.0m in the model
         if floating_dofs is None and floating_base:
-            floating_dofs = [PelvisDof.X, PelvisDof.Y, PelvisDof.Z, PelvisDof.RZ]
+            floating_dofs = [PelvisDof.X, PelvisDof.Y, PelvisDof.RZ]
         
         # Initialize parent - Note: we don't use block_until_reached
         # since we're directly setting positions
@@ -147,10 +148,25 @@ class CartesianActionModeDirect(JointPositionActionMode):
         pelvis_pose = Pose(pelvis_pos, pelvis_quat)
         
         # Get current arm joints
-        start_idx = self._robot.floating_base.dof_amount if self.floating_base else 0
-        end_idx = start_idx + len(self._robot.limb_actuators)
-        arms_qpos = np.array(self._robot.qpos_actuated[start_idx:end_idx])
-        qpos_arm_left, qpos_arm_right = np.split(arms_qpos, 2)
+        # Note: We need to get the actual joint positions directly from physics
+        # because qpos_actuated may include non-DOF values like fixed pelvis height
+        qpos_arm_left = []
+        qpos_arm_right = []
+        
+        for i in range(5):
+            actuator = self._robot.limb_actuators[i]
+            if actuator.joint:
+                joint = self._mojo.physics.bind(actuator.joint)
+                qpos_arm_left.append(joint.qpos[0] if joint.qpos.shape else joint.qpos)
+        
+        for i in range(5):
+            actuator = self._robot.limb_actuators[5 + i]
+            if actuator.joint:
+                joint = self._mojo.physics.bind(actuator.joint)
+                qpos_arm_right.append(joint.qpos[0] if joint.qpos.shape else joint.qpos)
+        
+        qpos_arm_left = np.array(qpos_arm_left)
+        qpos_arm_right = np.array(qpos_arm_right)
         
         # Solve IK
         ik_solution = self._ik_solver.solve(

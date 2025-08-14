@@ -38,7 +38,7 @@ def test_gradual_target_progression():
         render_mode=None,
     )
     
-    original_solver = H1UpperBodyIK(env, enable_full_6d_control=False)
+    original_solver = H1UpperBodyIK(env)
     
     # Initial configuration
     pelvis_pose = Pose(
@@ -164,7 +164,7 @@ def test_distance_scaling():
         render_mode=None,
     )
     
-    original_solver = H1UpperBodyIK(env, enable_full_6d_control=False)
+    original_solver = H1UpperBodyIK(env)
     
     # Initial configuration
     pelvis_pose = Pose(
@@ -276,7 +276,7 @@ def test_pelvis_movement():
         render_mode=None,
     )
     
-    original_solver = H1UpperBodyIK(env, enable_full_6d_control=False)
+    original_solver = H1UpperBodyIK(env)
     
     # Base pelvis configuration
     base_pelvis_pos = np.array([0.0, 0.0, 0.98])

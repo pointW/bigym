@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Test that converted demos with preserved seeds can be replayed correctly."""
 import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
 from pathlib import Path
 
