@@ -1,4 +1,9 @@
 """Convert demonstration data from joint actions to Cartesian actions."""
+import sys
+import os
+# Add parent directory to path to import modules
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
 from pathlib import Path
 from typing import List
@@ -85,8 +90,9 @@ def convert_joint_demo_to_cartesian(
         render_mode=None,
     )
     
-    # Reset environment to initial state
-    isolated_env.reset()
+    # Reset environment to initial state with original demo's seed
+    # This is CRITICAL to ensure the target positions match the original demo
+    isolated_env.reset(seed=original_demo.seed)
     
     # Track pelvis position for base action computation
     prev_pelvis_pos = isolated_env.robot.pelvis.get_position().copy()
@@ -158,8 +164,12 @@ def convert_joint_demo_to_cartesian(
         )
         timesteps.append(timestep)
     
+    # Create metadata with seed from original demo
+    cartesian_metadata = Metadata.from_env(cartesian_env)
+    cartesian_metadata.seed = original_demo.seed  # Preserve original seed for proper replay
+    
     cartesian_demo = Demo(
-        metadata=Metadata.from_env(cartesian_env),
+        metadata=cartesian_metadata,
         timesteps=timesteps,
     )
     

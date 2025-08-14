@@ -1,0 +1,5 @@
+- run scripts using conda env bygym. 
+- put temporary debug scripts in the `tmp` folder
+- for useful / important debug or test scripts, move from `tmp` to `scripts`
+- when writing debug scripts, run it and analyze the results. do not just return debug scripts that were not checked
+- Always maintain a todo list. When given a new task, first analyze the problem and come up with a plan. Write a todo list for your plan, and examine if the plan makes sense before executing. Then start executing the todo list. When received queued messages or observed interesting results that lead you do add new tasks, update your todo list.

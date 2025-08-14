@@ -181,13 +181,11 @@ class CartesianActionMode(JointPositionActionMode):
         # Gripper control
         gripper_action = action[idx:]
         
-        # Get current robot state for IK
-        # Use 0.98m to match solver's internal model
-        pelvis_pose = Pose(np.array([0.0, 0.0, 0.98]), Quaternion(w=1, x=0, y=0, z=0))
-        
-        # Note: We're using a fixed pelvis for arm IK since H1UpperBodyIK
-        # removes the pelvis free joint anyway. Base movement could be
-        # handled separately if needed.
+        # Get actual pelvis pose from the environment
+        pelvis = self._robot.pelvis
+        pelvis_pos = pelvis.get_position()
+        pelvis_quat = Quaternion(pelvis.get_quaternion())
+        pelvis_pose = Pose(pelvis_pos, pelvis_quat)
         
         # Get current arm joint positions
         start_index = self._robot.floating_base.dof_amount if self.floating_base else 0
@@ -254,25 +252,10 @@ class CartesianActionMode(JointPositionActionMode):
     def _calibrate_ik_solver(self):
         """Calibration is currently disabled as it was making accuracy worse."""
         # The H1UpperBodyIK solver has fundamental model differences:
-        # - Uses pelvis at 0.98m (actual robot is at 1.0m)
         # - Expects 4 joints per arm (actual has 5)
         # - Removes all non-H1 bodies from the model
-        # These differences result in ~56mm error that calibration couldn't fix
+        # Now using actual pelvis pose from environment instead of hardcoded value
         pass
-    
-    def _get_current_pelvis_pose(self) -> Pose:
-        """Get current pelvis pose."""
-        pelvis = self._robot.pelvis
-        current_pelvis_pos = pelvis.get_position()
-        current_pelvis_quat = Quaternion(pelvis.get_quaternion())
-        
-        # H1UpperBodyIK uses a fixed pelvis height of 0.98m in its simplified model
-        # We need to adjust to match that reference frame
-        # The actual pelvis is at 1.0m, so we subtract 0.02m
-        adjusted_pelvis_pos = current_pelvis_pos.copy()
-        adjusted_pelvis_pos[2] = 0.98  # Use solver's expected height
-        
-        return Pose(adjusted_pelvis_pos, current_pelvis_quat)
         
     def get_current_ee_poses(self) -> tuple[Pose, Pose]:
         """Get current end-effector poses.

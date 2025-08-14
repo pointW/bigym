@@ -30,4 +30,7 @@ pip-delete-this-directory.txt
 # VSCode
 .vscode
 cartesian_demos_final/
+cartesian_demos/
+cartesian_demos_target/
 .claude/debug_archive/
+tmp/
