@@ -297,24 +297,10 @@ class TestMinkIKSolver:
             print("⚠️ Mink IK solver not available, skipping integration test")
             return None
         
-        # Create custom Direct action modes using different IK solvers
-        class CartesianActionModeDirectMink(CartesianActionModeDirect):
-            """Direct Cartesian action mode using Mink IK solver."""
-            
-            def _initialize_ik_solver(self):
-                """Initialize the Mink IK solver."""
-                class MockEnv:
-                    def __init__(self, robot, mojo):
-                        self.robot = robot
-                        self.mojo = mojo
-                
-                mock_env = MockEnv(self._robot, self._mojo)
-                self._ik_solver = MinkH1UpperBodyIK(mock_env)
-        
-        # Test both solvers with Direct mode
+        # Test both solvers with Direct mode using the new ik_solver parameter
         modes = [
-            ("Original IK (Direct)", CartesianActionModeDirect(floating_base=True)),
-            ("Mink IK (Direct)", CartesianActionModeDirectMink(floating_base=True)),
+            ("Original IK (Direct)", CartesianActionModeDirect(floating_base=True, ik_solver="original")),
+            ("Mink IK (Direct)", CartesianActionModeDirect(floating_base=True, ik_solver="mink")),
         ]
         
         test_distances = [0.01, 0.02, 0.05, 0.10]

@@ -46,6 +46,7 @@ class CartesianActionModeDirect(JointPositionActionMode):
         floating_base: bool = True,
         floating_dofs: Optional[list] = None,
         position_limits: tuple[float, float] = (-2.0, 2.0),
+        ik_solver: str = "mink",
     ):
         """Initialize direct Cartesian action mode.
         
@@ -53,6 +54,7 @@ class CartesianActionModeDirect(JointPositionActionMode):
             floating_base: Whether to enable floating base control
             floating_dofs: Floating DOFs (defaults to 3 DOF matching JointPositionActionMode)
             position_limits: Min/max limits for end-effector positions
+            ik_solver: IK solver to use ("original" or "mink")
         """
         # Default to 3 DOF for base to match JointPositionActionMode
         # The pelvis Z is fixed at 1.0m in the model
@@ -69,6 +71,7 @@ class CartesianActionModeDirect(JointPositionActionMode):
         )
         
         self.position_limits = position_limits
+        self.ik_solver_type = ik_solver
         self._ik_solver = None
         
     def bind_robot(self, robot, mojo):
@@ -208,14 +211,24 @@ class CartesianActionModeDirect(JointPositionActionMode):
         self._mojo.step()
         
     def _initialize_ik_solver(self):
-        """Initialize the IK solver."""
+        """Initialize the IK solver based on selected type."""
         class ActualEnvWrapper:
             def __init__(self, robot, mojo):
                 self.robot = robot
                 self.mojo = mojo
         
         env_wrapper = ActualEnvWrapper(self._robot, self._mojo)
-        self._ik_solver = H1UpperBodyIK(env_wrapper)
+        
+        # Create the IK solver based on selected type
+        if self.ik_solver_type == "mink":
+            try:
+                from bigym.ik.mink_h1_ik import MinkH1UpperBodyIK
+                self._ik_solver = MinkH1UpperBodyIK(env_wrapper)
+            except ImportError:
+                print("Warning: Mink IK solver not available, falling back to original")
+                self._ik_solver = H1UpperBodyIK(env_wrapper)
+        else:  # "original"
+            self._ik_solver = H1UpperBodyIK(env_wrapper)
         
     def reset(self, reset_state: np.ndarray):
         """Reset robot state."""

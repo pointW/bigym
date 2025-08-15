@@ -7,6 +7,9 @@ Since Cartesian achieved demos were created by:
 3. Computing FK to get Cartesian poses
 
 The Cartesian action should match the Joint mode's achieved pose.
+
+NOTE: Uses 3 DOF floating base (X, Y, RZ) to match the actual demo data.
+Uses environment.step() method for accurate results (~1.0mm error with original IK).
 """
 import sys
 sys.path.insert(0, '/Users/dian/Documents/projects/bigym')
@@ -79,7 +82,8 @@ def compare_action_and_poses(seed, max_steps=20):
     env_direct = ReachTarget(
         action_mode=CartesianActionModeDirect(
             floating_base=True,
-            floating_dofs=[PelvisDof.X, PelvisDof.Y, PelvisDof.Z, PelvisDof.RZ]
+            floating_dofs=[PelvisDof.X, PelvisDof.Y, PelvisDof.RZ],  # 3 DOF to match data
+            ik_solver="mink"
         ),
         control_frequency=50,
         render_mode=None,
@@ -99,14 +103,10 @@ def compare_action_and_poses(seed, max_steps=20):
         if joint_action is None or cartesian_action is None:
             continue
         
-        # Fix Cartesian action dimension if needed
-        if len(cartesian_action) == 23:
-            fixed_action = np.zeros(24)
-            fixed_action[:18] = cartesian_action[:18]
-            fixed_action[18:21] = cartesian_action[18:21]
-            fixed_action[21] = 0
-            fixed_action[22:] = cartesian_action[21:]
-            cartesian_action = fixed_action
+        # Cartesian action should be 23D with 3 DOF floating base (18 EE + 3 base + 2 gripper)
+        if len(cartesian_action) != 23:
+            print(f"  ⚠️ Warning: Expected 23D action, got {len(cartesian_action)}D")
+            continue
         
         # Extract target poses from Cartesian action
         target_left_pos = cartesian_action[:3]

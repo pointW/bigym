@@ -72,6 +72,7 @@ class CartesianActionMode(JointPositionActionMode):
         floating_base: bool = True,
         floating_dofs: Optional[list] = None,
         position_limits: tuple[float, float] = (-2.0, 2.0),
+        ik_solver: str = "original",
     ):
         """Initialize Cartesian action mode.
         
@@ -79,6 +80,7 @@ class CartesianActionMode(JointPositionActionMode):
             floating_base: Whether to enable floating base control
             floating_dofs: Floating DOFs to use
             position_limits: Min/max limits for end-effector positions
+            ik_solver: IK solver to use ("original" or "mink")
         """
         # Initialize as JointPositionActionMode with absolute control
         super().__init__(
@@ -87,6 +89,7 @@ class CartesianActionMode(JointPositionActionMode):
             floating_dofs=floating_dofs
         )
         self.position_limits = position_limits
+        self.ik_solver_type = ik_solver
         self._ik_solver = None
         
     def bind_robot(self, robot, mojo):
@@ -226,14 +229,8 @@ class CartesianActionMode(JointPositionActionMode):
             self._initialize_ik_solver()
         
     def _initialize_ik_solver(self):
-        """Initialize the IK solver."""
-        # The H1UpperBodyIK creates its own internal physics model
-        # and does NOT modify the actual environment (verified through testing)
-        # We need to pass the actual environment's mojo reference so the solver's
-        # internal model matches the actual robot
-        
-        # Create a minimal wrapper that provides the interface H1UpperBodyIK expects
-        # using the actual robot and mojo references from bind_robot
+        """Initialize the IK solver based on selected type."""
+        # Create a minimal wrapper that provides the interface IK solvers expect
         class ActualEnvWrapper:
             def __init__(self, robot, mojo):
                 self.robot = robot
@@ -242,11 +239,18 @@ class CartesianActionMode(JointPositionActionMode):
         # Use the actual robot and mojo references that were bound to this action mode
         env_wrapper = ActualEnvWrapper(self._robot, self._mojo)
         
-        # Create the IK solver with the actual environment's model
-        self._ik_solver = H1UpperBodyIK(env_wrapper)
+        # Create the IK solver based on selected type
+        if self.ik_solver_type == "mink":
+            try:
+                from bigym.ik.mink_h1_ik import MinkH1UpperBodyIK
+                self._ik_solver = MinkH1UpperBodyIK(env_wrapper)
+            except ImportError:
+                print("Warning: Mink IK solver not available, falling back to original")
+                self._ik_solver = H1UpperBodyIK(env_wrapper)
+        else:  # "original"
+            self._ik_solver = H1UpperBodyIK(env_wrapper)
         
         # Note: Calibration is disabled as it was making accuracy worse
-        # The solver has inherent model differences that result in ~56mm error
         self._calibrate_ik_solver()
     
     def _calibrate_ik_solver(self):

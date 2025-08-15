@@ -94,7 +94,7 @@ def test_preserved_seeds(n_demos=60):
     env = ReachTarget(
         action_mode=CartesianActionMode(
             floating_base=True,
-            floating_dofs=[PelvisDof.X, PelvisDof.Y, PelvisDof.Z, PelvisDof.RZ]
+            floating_dofs=[PelvisDof.X, PelvisDof.Y, PelvisDof.RZ]
         ),
         control_frequency=50,
         render_mode=None,
@@ -130,15 +130,6 @@ def test_preserved_seeds(n_demos=60):
             if action is None:
                 continue
             
-            # Fix dimension if needed
-            if len(action) == 23:
-                fixed_action = np.zeros(24)
-                fixed_action[:18] = action[:18]
-                fixed_action[18:21] = action[18:21]
-                fixed_action[21] = 0
-                fixed_action[22:] = action[21:]
-                action = fixed_action
-            
             action = np.clip(action, env.action_space.low, env.action_space.high)
             obs, reward, terminated, truncated, info = env.step(action)
             max_reward = max(max_reward, reward)
@@ -170,7 +161,7 @@ def test_preserved_seeds(n_demos=60):
     env = ReachTarget(
         action_mode=CartesianActionMode(
             floating_base=True,
-            floating_dofs=[PelvisDof.X, PelvisDof.Y, PelvisDof.Z, PelvisDof.RZ]
+            floating_dofs=[PelvisDof.X, PelvisDof.Y, PelvisDof.RZ]
         ),
         control_frequency=50,
         render_mode=None,
@@ -204,15 +195,6 @@ def test_preserved_seeds(n_demos=60):
             if action is None:
                 continue
             
-            # Fix dimension if needed
-            if len(action) == 23:
-                fixed_action = np.zeros(24)
-                fixed_action[:18] = action[:18]
-                fixed_action[18:21] = action[18:21]
-                fixed_action[21] = 0
-                fixed_action[22:] = action[21:]
-                action = fixed_action
-            
             action = np.clip(action, env.action_space.low, env.action_space.high)
             obs, reward, terminated, truncated, info = env.step(action)
             max_reward = max(max_reward, reward)
@@ -244,7 +226,8 @@ def test_preserved_seeds(n_demos=60):
     env = ReachTarget(
         action_mode=CartesianActionModeDirect(
             floating_base=True,
-            floating_dofs=[PelvisDof.X, PelvisDof.Y, PelvisDof.Z, PelvisDof.RZ]
+            floating_dofs=[PelvisDof.X, PelvisDof.Y, PelvisDof.RZ],
+            ik_solver="mink"
         ),
         control_frequency=50,
         render_mode=None,
@@ -279,15 +262,6 @@ def test_preserved_seeds(n_demos=60):
                 action = timestep.action  # Try using the action field directly
             if action is None:
                 continue
-            
-            # Fix dimension if needed
-            if len(action) == 23:
-                fixed_action = np.zeros(24)
-                fixed_action[:18] = action[:18]
-                fixed_action[18:21] = action[18:21]
-                fixed_action[21] = 0
-                fixed_action[22:] = action[21:]
-                action = fixed_action
             
             action = np.clip(action, env.action_space.low, env.action_space.high)
             obs, reward, terminated, truncated, info = env.step(action)
