@@ -73,6 +73,7 @@ class CartesianActionMode(JointPositionActionMode):
         floating_dofs: Optional[list] = None,
         position_limits: tuple[float, float] = (-2.0, 2.0),
         ik_solver: str = "original",
+        block_until_reached: bool = False,
     ):
         """Initialize Cartesian action mode.
         
@@ -86,7 +87,8 @@ class CartesianActionMode(JointPositionActionMode):
         super().__init__(
             absolute=True, 
             floating_base=floating_base, 
-            floating_dofs=floating_dofs
+            floating_dofs=floating_dofs,
+            block_until_reached=block_until_reached
         )
         self.position_limits = position_limits
         self.ik_solver_type = ik_solver
