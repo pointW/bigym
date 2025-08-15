@@ -21,6 +21,7 @@ from pyquaternion import Quaternion
 
 from bigym.action_modes import JointPositionActionMode
 from bigym.envs.reach_target import ReachTarget
+from bigym.envs.move_plates import MovePlate
 from bigym.utils.observation_config import ObservationConfig, CameraConfig
 from bigym.cartesian_action_mode import CartesianActionMode
 from bigym.const import HandSide
@@ -76,7 +77,7 @@ def poses_to_cartesian_action_direct(left_pose: Pose, right_pose: Pose, base_act
 
 def compute_target_poses_from_joint_action(
     joint_action: np.ndarray,
-    env: ReachTarget,
+    env: MovePlate,
     current_joint_positions: np.ndarray
 ) -> tuple[Pose, Pose]:
     """Compute target end-effector poses from joint action targets using forward kinematics.
@@ -141,8 +142,8 @@ def compute_target_poses_from_joint_action(
 
 def convert_joint_demo_to_cartesian_target(
     original_demo: Demo, 
-    cartesian_env: ReachTarget,
-    joint_env: ReachTarget = None  # Unused - we create isolated environment
+    cartesian_env: MovePlate,
+    joint_env: MovePlate = None  # Unused - we create isolated environment
 ) -> Demo:
     """Convert a single demo from joint actions to Cartesian actions using TARGET poses.
     
@@ -167,10 +168,17 @@ def convert_joint_demo_to_cartesian_target(
     print(f"Converting demo with {len(joint_actions)} steps using TARGET poses...")
     
     # Create isolated environment for this conversion to avoid state contamination
-    isolated_env = ReachTarget(
+    isolated_env = MovePlate(
         action_mode=JointPositionActionMode(floating_base=True, absolute=True),
         control_frequency=50,
-        render_mode=None,
+        observation_config=ObservationConfig(
+            cameras=[
+                CameraConfig("head", resolution=(84, 84)),
+                CameraConfig("left_wrist", resolution=(84, 84)),
+                CameraConfig("right_wrist", resolution=(84, 84)),
+            ]
+        ),
+        render_mode="human",
     )
     
     # Reset environment to initial state with original demo's seed
@@ -271,34 +279,30 @@ def convert_demos_batch(
     print(f"Converting {demo_amount} demonstrations to Cartesian format (using TARGET poses)...")
     
     # Create environments
-    joint_env = ReachTarget(
+    joint_env = MovePlate(
         action_mode=JointPositionActionMode(floating_base=True, absolute=True),
+        control_frequency=50,
         observation_config=ObservationConfig(
             cameras=[
-                CameraConfig(
-                    name="head",
-                    rgb=True,
-                    depth=False,
-                    resolution=(128, 128),
-                )
-            ],
+                CameraConfig("head", resolution=(84, 84)),
+                CameraConfig("left_wrist", resolution=(84, 84)),
+                CameraConfig("right_wrist", resolution=(84, 84)),
+            ]
         ),
-        render_mode=None,
+        render_mode="human",
     )
     
-    cartesian_env = ReachTarget(
+    cartesian_env = MovePlate(
         action_mode=CartesianActionMode(floating_base=True),
+        control_frequency=50,
         observation_config=ObservationConfig(
             cameras=[
-                CameraConfig(
-                    name="head", 
-                    rgb=True,
-                    depth=False,
-                    resolution=(128, 128),
-                )
-            ],
+                CameraConfig("head", resolution=(84, 84)),
+                CameraConfig("left_wrist", resolution=(84, 84)),
+                CameraConfig("right_wrist", resolution=(84, 84)),
+            ]
         ),
-        render_mode=None,
+        render_mode="human",
     )
     
     # Load original joint demos
@@ -355,7 +359,7 @@ def analyze_difference():
     print("="*60)
     
     # Create environment
-    env = ReachTarget(
+    env = MovePlate(
         action_mode=JointPositionActionMode(floating_base=True, absolute=True),
         control_frequency=50,
         render_mode=None,
@@ -420,7 +424,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Convert joint demos to Cartesian demos using TARGET poses")
     parser.add_argument("--max-demos", type=int, default=60, help="Maximum number of demos to convert")
-    parser.add_argument("--output-dir", type=str, default="cartesian_demos_target_fixed", 
+    parser.add_argument("--output-dir", type=str, default="cartesian_demos_target_move_plate", 
                        help="Output directory for converted demos")
     parser.add_argument("--analyze", action="store_true", help="Analyze difference between achieved and target")
     args = parser.parse_args()

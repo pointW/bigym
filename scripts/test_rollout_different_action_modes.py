@@ -8,6 +8,8 @@ import numpy as np
 from pathlib import Path
 
 from bigym.envs.reach_target import ReachTarget
+from bigym.envs.move_plates import MovePlate
+from bigym.utils.observation_config import ObservationConfig, CameraConfig
 from bigym.action_modes import JointPositionActionMode, PelvisDof
 from bigym.cartesian_action_mode import CartesianActionMode
 from bigym.cartesian_action_mode_direct import CartesianActionModeDirect
@@ -35,16 +37,29 @@ def test_preserved_seeds(n_demos=60):
     
     # Test 1: Original Joint Actions (baseline)
     print("\n1. ORIGINAL JOINT ACTIONS (baseline):")
-    env = ReachTarget(
+    env = MovePlate(
         action_mode=JointPositionActionMode(floating_base=True, absolute=True),
         control_frequency=50,
-        render_mode=None,
-    )
+        observation_config=ObservationConfig(
+            cameras=[
+                CameraConfig("head", resolution=(84, 84)),
+                CameraConfig("left_wrist", resolution=(84, 84)),
+                CameraConfig("right_wrist", resolution=(84, 84)),
+            ]
+        ),
+        render_mode="human",    
+        )
     
     metadata = Metadata.from_env(env)
     demo_store = DemoStore()
     joint_demos = demo_store.get_demos(metadata, amount=n_demos, frequency=50)
     
+    env = MovePlate(
+        action_mode=JointPositionActionMode(floating_base=True, absolute=True),
+        control_frequency=50,
+        render_mode=None,    
+        )
+
     # Collect seeds we'll test
     test_seeds = [demo.seed for demo in joint_demos]
     
@@ -91,19 +106,17 @@ def test_preserved_seeds(n_demos=60):
     
     # Test 2: Cartesian Achieved with preserved seed
     print("\n2. CARTESIAN ACHIEVED (with preserved seed):")
-    env = ReachTarget(
+    env = MovePlate(
         action_mode=CartesianActionMode(
             floating_base=True,
-            floating_dofs=[PelvisDof.X, PelvisDof.Y, PelvisDof.RZ]
         ),
         control_frequency=50,
-        render_mode=None,
     )
     
     successes = []
     tested_count = 0
     for i in range(60):
-        demo_path = Path(f"cartesian_demos/cartesian_demo_{i:03d}.safetensors")
+        demo_path = Path(f"cartesian_demos_move_plate/cartesian_demo_{i:03d}.safetensors")
         if not demo_path.exists():
             continue
         
@@ -158,19 +171,17 @@ def test_preserved_seeds(n_demos=60):
     
     # Test 3: Cartesian Target with preserved seed
     print("\n3. CARTESIAN TARGET (with preserved seed):")
-    env = ReachTarget(
+    env = MovePlate(
         action_mode=CartesianActionMode(
             floating_base=True,
-            floating_dofs=[PelvisDof.X, PelvisDof.Y, PelvisDof.RZ]
         ),
         control_frequency=50,
-        render_mode=None,
     )
     
     successes = []
     tested_count = 0
     for i in range(60):
-        demo_path = Path(f"cartesian_demos_target/cartesian_demo_{i:03d}.safetensors")
+        demo_path = Path(f"cartesian_demos_target_move_plate/cartesian_demo_{i:03d}.safetensors")
         if not demo_path.exists():
             continue
         
@@ -223,20 +234,18 @@ def test_preserved_seeds(n_demos=60):
     
     # Test 4: Cartesian Direct (with achieved demos)
     print("\n4. CARTESIAN DIRECT (achieved demos with direct qpos control):")
-    env = ReachTarget(
+    env = MovePlate(
         action_mode=CartesianActionModeDirect(
             floating_base=True,
-            floating_dofs=[PelvisDof.X, PelvisDof.Y, PelvisDof.RZ],
             ik_solver="mink"
         ),
         control_frequency=50,
-        render_mode=None,
     )
     
     successes = []
     tested_count = 0
     for i in range(60):
-        demo_path = Path(f"cartesian_demos/cartesian_demo_{i:03d}.safetensors")
+        demo_path = Path(f"cartesian_demos_move_plate/cartesian_demo_{i:03d}.safetensors")
         if not demo_path.exists():
             continue
         
@@ -416,7 +425,7 @@ Actual Results:
     
     achieved_seeds = set()
     for i in range(60):
-        demo_path = Path(f"cartesian_demos/cartesian_demo_{i:03d}.safetensors")
+        demo_path = Path(f"cartesian_demos_move_plate/cartesian_demo_{i:03d}.safetensors")
         if demo_path.exists():
             demo = Demo.from_safetensors(demo_path)
             if demo:
@@ -424,7 +433,7 @@ Actual Results:
     
     target_seeds = set()
     for i in range(60):
-        demo_path = Path(f"cartesian_demos_target/cartesian_demo_{i:03d}.safetensors")
+        demo_path = Path(f"cartesian_demos_target_move_plate/cartesian_demo_{i:03d}.safetensors")
         if demo_path.exists():
             demo = Demo.from_safetensors(demo_path)
             if demo:

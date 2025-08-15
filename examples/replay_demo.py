@@ -15,7 +15,7 @@ from demonstrations.utils import Metadata
 
 control_frequency = 50
 env = MovePlate(
-    action_mode=JointPositionActionMode(floating_base=True, absolute=True, block_until_reached=True),
+    action_mode=JointPositionActionMode(floating_base=True, absolute=True),
     control_frequency=50,
     observation_config=ObservationConfig(
         cameras=[
@@ -30,8 +30,11 @@ metadata = Metadata.from_env(env)
 
 # Get demonstrations from DemoStore
 demo_store = DemoStore()
-demos = demo_store.get_demos(metadata, amount=10, frequency=control_frequency)
+demos = demo_store.get_demos(metadata, amount=100, frequency=control_frequency)
 
 # Replay first demonstration
 player = DemoPlayer()
-player.replay_in_env(demos[1], env, demo_frequency=control_frequency)
+player.replay_in_env(demos[0], env, demo_frequency=control_frequency)
+# for i in range(60):
+#     if demos[i].seed == 1935868678:
+#         player.replay_in_env(demos[i], env, demo_frequency=control_frequency)

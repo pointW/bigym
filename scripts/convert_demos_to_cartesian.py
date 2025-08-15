@@ -13,6 +13,7 @@ from pyquaternion import Quaternion
 
 from bigym.action_modes import JointPositionActionMode
 from bigym.envs.reach_target import ReachTarget
+from bigym.envs.move_plates import MovePlate
 from bigym.utils.observation_config import ObservationConfig, CameraConfig
 from bigym.cartesian_action_mode import CartesianActionMode, Pose, rotation_matrix_to_6d
 from bigym.const import HandSide
@@ -62,8 +63,8 @@ def poses_to_cartesian_action_direct(left_pose: Pose, right_pose: Pose, base_act
 
 def convert_joint_demo_to_cartesian(
     original_demo: Demo, 
-    cartesian_env: ReachTarget,
-    joint_env: ReachTarget = None  # Unused - we create isolated environment
+    cartesian_env: MovePlate,
+    joint_env: MovePlate = None  # Unused - we create isolated environment
 ) -> Demo:
     """Convert a single demo from joint actions to Cartesian actions.
     
@@ -84,10 +85,17 @@ def convert_joint_demo_to_cartesian(
     print(f"Converting demo with {len(joint_actions)} steps...")
     
     # Create isolated environment for this conversion to avoid state contamination
-    isolated_env = ReachTarget(
+    isolated_env = MovePlate(
         action_mode=JointPositionActionMode(floating_base=True, absolute=True),
         control_frequency=50,
-        render_mode=None,
+        observation_config=ObservationConfig(
+            cameras=[
+                CameraConfig("head", resolution=(84, 84)),
+                CameraConfig("left_wrist", resolution=(84, 84)),
+                CameraConfig("right_wrist", resolution=(84, 84)),
+            ]
+        ),
+        render_mode="human",
     )
     
     # Reset environment to initial state with original demo's seed
@@ -185,19 +193,17 @@ def convert_demos_batch(
     print(f"Converting {demo_amount} demonstrations to Cartesian format...")
     
     # Create environments
-    joint_env = ReachTarget(
+    joint_env = MovePlate(
         action_mode=JointPositionActionMode(floating_base=True, absolute=True),
+        control_frequency=50,
         observation_config=ObservationConfig(
             cameras=[
-                CameraConfig(
-                    name="head",
-                    rgb=True,
-                    depth=False,
-                    resolution=(128, 128),
-                )
-            ],
+                CameraConfig("head", resolution=(84, 84)),
+                CameraConfig("left_wrist", resolution=(84, 84)),
+                CameraConfig("right_wrist", resolution=(84, 84)),
+            ]
         ),
-        render_mode=None,
+        render_mode="human",
     )
     
     # Debug: Print action space bounds
@@ -206,19 +212,17 @@ def convert_demos_batch(
     print(f"  High: {joint_env.action_space.high}")
     print(f"  Shape: {joint_env.action_space.shape}")
     
-    cartesian_env = ReachTarget(
+    cartesian_env = MovePlate(
         action_mode=CartesianActionMode(floating_base=True),
+        control_frequency=50,
         observation_config=ObservationConfig(
             cameras=[
-                CameraConfig(
-                    name="head", 
-                    rgb=True,
-                    depth=False,
-                    resolution=(128, 128),
-                )
-            ],
+                CameraConfig("head", resolution=(84, 84)),
+                CameraConfig("left_wrist", resolution=(84, 84)),
+                CameraConfig("right_wrist", resolution=(84, 84)),
+            ]
         ),
-        render_mode=None,
+        render_mode="human",
     )
     
     # Load original joint demos (using cached demos if available)
@@ -288,12 +292,12 @@ def analyze_action_spaces():
     print("Analyzing action spaces...")
     
     # Joint action mode
-    joint_env = ReachTarget(
+    joint_env = MovePlate(
         action_mode=JointPositionActionMode(floating_base=True, absolute=True),
     )
     
     # Cartesian action mode  
-    cartesian_env = ReachTarget(
+    cartesian_env = MovePlate(
         action_mode=CartesianActionMode(floating_base=True),
     )
     
@@ -324,7 +328,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Convert joint demos to Cartesian demos")
     parser.add_argument("--max-demos", type=int, default=60, help="Maximum number of demos to convert")
-    parser.add_argument("--output-dir", type=str, default="cartesian_demos_fixed", help="Output directory for converted demos")
+    parser.add_argument("--output-dir", type=str, default="cartesian_demos_move_plate", help="Output directory for converted demos")
     args = parser.parse_args()
     
     # First analyze the action spaces
