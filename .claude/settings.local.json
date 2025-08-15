@@ -44,9 +44,19 @@
       "Bash(PYTHONPATH=/Users/dian/Documents/projects/bigym python convert_demos_to_cartesian.py --max-demos 3 --output-dir cartesian_demos_final)",
       "Bash(PYTHONPATH=/Users/dian/Documents/projects/bigym python -m pytest tests/test_mink_ik_solver.py -v --tb=short)",
       "Bash(PYTHONPATH=:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(conda activate:*)",
+      "Bash(conda info:*)",
+      "Bash(source:*)",
+      "Bash(export:*)",
+      "Bash(grep:*)",
+      "WebSearch",
+      "Bash(find:*)",
+      "WebFetch(domain:kevinzakka.github.io)",
+      "Bash(conda run:*)"
     ],
     "deny": [],
-    "ask": []
+    "ask": [],
+    "defaultMode": "acceptEdits"
   }
 }

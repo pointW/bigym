@@ -7,14 +7,15 @@ Notes:
 
 from bigym.action_modes import JointPositionActionMode
 from bigym.envs.reach_target import ReachTarget
+from bigym.envs.move_plates import MovePlate
 from bigym.utils.observation_config import ObservationConfig, CameraConfig
 from demonstrations.demo_player import DemoPlayer
 from demonstrations.demo_store import DemoStore
 from demonstrations.utils import Metadata
 
 control_frequency = 50
-env = ReachTarget(
-    action_mode=JointPositionActionMode(floating_base=True, absolute=True),
+env = MovePlate(
+    action_mode=JointPositionActionMode(floating_base=True, absolute=True, block_until_reached=True),
     control_frequency=50,
     observation_config=ObservationConfig(
         cameras=[
@@ -33,4 +34,4 @@ demos = demo_store.get_demos(metadata, amount=10, frequency=control_frequency)
 
 # Replay first demonstration
 player = DemoPlayer()
-player.replay_in_env(demos[0], env, demo_frequency=control_frequency)
+player.replay_in_env(demos[1], env, demo_frequency=control_frequency)

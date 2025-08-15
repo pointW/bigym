@@ -94,8 +94,8 @@ def convert_joint_demo_to_cartesian(
     # This is CRITICAL to ensure the target positions match the original demo
     isolated_env.reset(seed=original_demo.seed)
     
-    # Track pelvis position for base action computation
-    prev_pelvis_pos = isolated_env.robot.pelvis.get_position().copy()
+    # Get floating base DOF count for proper action extraction
+    floating_base_dof = isolated_env.robot.floating_base.dof_amount if isolated_env.action_mode.floating_base else 0
     
     for step_idx, joint_action in enumerate(tqdm(joint_actions, desc="Converting steps")):
         # Clip joint action to ensure it's within action space bounds (demos may have slight bound violations)
@@ -116,25 +116,18 @@ def convert_joint_demo_to_cartesian(
         right_quat = Quaternion(right_site.get_quaternion())
         right_pose = Pose(right_pos, right_quat)
         
-        # Get current pelvis position AFTER stepping
-        current_pelvis_pos = isolated_env.robot.pelvis.get_position()
-        
-        # Compute actual base action that occurred (difference in pelvis position)
+        # Extract base and gripper actions DIRECTLY from joint action
         base_action = None
         gripper_action = None
         
         if cartesian_env.action_mode.floating_base:
-            # Compute the actual base movement that occurred
-            pelvis_movement = current_pelvis_pos - prev_pelvis_pos
-            base_action = pelvis_movement  # This is the actual base action that should reproduce the movement
+            # FIX: Copy base action directly from joint action (not pelvis movement delta)
+            base_action = joint_action_clipped[:floating_base_dof]
             # Gripper actions are at the end
-            gripper_action = joint_action[-2:]
+            gripper_action = joint_action_clipped[-2:]
         else:
             # No floating base - gripper actions are still at the end
-            gripper_action = joint_action[-2:]
-        
-        # Update previous pelvis position for next iteration
-        prev_pelvis_pos = current_pelvis_pos.copy()
+            gripper_action = joint_action_clipped[-2:]
             
         # Convert poses to Cartesian action directly (bypassing IK)
         # This should have ZERO error since we're converting FROM FK results
@@ -331,7 +324,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Convert joint demos to Cartesian demos")
     parser.add_argument("--max-demos", type=int, default=60, help="Maximum number of demos to convert")
-    parser.add_argument("--output-dir", type=str, default="cartesian_demos", help="Output directory for converted demos")
+    parser.add_argument("--output-dir", type=str, default="cartesian_demos_fixed", help="Output directory for converted demos")
     args = parser.parse_args()
     
     # First analyze the action spaces

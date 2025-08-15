@@ -289,16 +289,47 @@ def test_preserved_seeds(n_demos=60):
     results["Cartesian Direct"] = direct_sr
     env.close()
     
+    # Calculate step statistics
+    step_stats = {}
+    for method in ['joint', 'achieved', 'target', 'direct']:
+        steps = []
+        for seed in seed_results:
+            if method in seed_results[seed]:
+                success, step = seed_results[seed][method]
+                if success and step is not None:
+                    steps.append(step)
+        
+        if steps:
+            step_stats[method] = {
+                'mean': np.mean(steps),
+                'std': np.std(steps),
+                'min': min(steps),
+                'max': max(steps),
+                'median': np.median(steps)
+            }
+    
     # Summary
     print("\n" + "="*80)
     print("SUMMARY (With Preserved Seeds)")
     print("="*80)
-    print("\n| Method               | Success Rate |")
-    print("|----------------------|--------------|")
+    print("\n| Method               | Success Rate | Avg Steps | Min | Max | Median |")
+    print("|----------------------|--------------|-----------|-----|-----|--------|")
+    
+    method_names = {
+        "Joint Actions": "joint",
+        "Cartesian Achieved": "achieved", 
+        "Cartesian Target": "target",
+        "Cartesian Direct": "direct"
+    }
     
     for method, sr in results.items():
         status = "✅" if sr >= 90 else ("⚠️" if sr >= 50 else "❌")
-        print(f"| {method:20s} | {status} {sr:5.1f}% |")
+        key = method_names.get(method)
+        if key and key in step_stats:
+            stats = step_stats[key]
+            print(f"| {method:20s} | {status} {sr:5.1f}% | {stats['mean']:9.1f} | {stats['min']:3.0f} | {stats['max']:3.0f} | {stats['median']:6.0f} |")
+        else:
+            print(f"| {method:20s} | {status} {sr:5.1f}% |     -     |  -  |  -  |   -    |")
     
     print("\n" + "="*80)
     print("ANALYSIS")
@@ -342,6 +373,37 @@ Actual Results:
         print("✅ Direct mode achieves near-perfect accuracy as expected!")
     else:
         print("⚠️ Direct mode has lower accuracy than expected")
+    
+    # Step count analysis
+    print("\n" + "="*80)
+    print("STEP COUNT STATISTICS")
+    print("="*80)
+    
+    for method_name, method_key in method_names.items():
+        if method_key in step_stats:
+            stats = step_stats[method_key]
+            print(f"\n{method_name}:")
+            print(f"  Mean:   {stats['mean']:.1f} steps")
+            print(f"  Std:    {stats['std']:.1f} steps")
+            print(f"  Median: {stats['median']:.1f} steps")
+            print(f"  Range:  {stats['min']:.0f} - {stats['max']:.0f} steps")
+    
+    # Compare step counts between methods
+    if 'joint' in step_stats and 'target' in step_stats:
+        joint_mean = step_stats['joint']['mean']
+        target_mean = step_stats['target']['mean']
+        diff = abs(joint_mean - target_mean)
+        print(f"\n📊 Joint vs Target step difference: {diff:.1f} steps ({diff/joint_mean*100:.1f}%)")
+        if diff < 5:
+            print("   ✅ Target conversion maintains similar efficiency to joint control!")
+    
+    if 'joint' in step_stats and 'direct' in step_stats:
+        joint_mean = step_stats['joint']['mean']
+        direct_mean = step_stats['direct']['mean']
+        diff = abs(joint_mean - direct_mean)
+        print(f"\n📊 Joint vs Direct step difference: {diff:.1f} steps ({diff/joint_mean*100:.1f}%)")
+        if diff < 5:
+            print("   ✅ Direct mode maintains similar efficiency to joint control!")
     
     # return seed_results
     

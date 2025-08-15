@@ -337,7 +337,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--demos-dir", 
         type=str, 
-        default="cartesian_demos_final",
+        default="cartesian_demos_target",
         help="Directory containing Cartesian demos (default: cartesian_demos_final)"
     )
     parser.add_argument(
