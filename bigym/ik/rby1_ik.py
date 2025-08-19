@@ -139,8 +139,10 @@ class RBY1IK:
         
         # Add base pose task to constrain base movement
         # This is more effective than high posture cost alone
+        # Check if we're in an environment context (bodies have namespace)
+        base_name = "rby1/base" if any("rby1/" in self.model.body(i).name for i in range(self.model.nbody)) else "base"
         base_task = mink.FrameTask(
-            frame_name="base",  # RBY1 base body
+            frame_name=base_name,  # RBY1 base body (with or without namespace)
             frame_type="body",
             position_cost=10000.0,  # Very high cost to keep base fixed
             orientation_cost=10000.0,  # Very high cost to keep orientation fixed
@@ -176,8 +178,10 @@ class RBY1IK:
         
         # Add left arm task if target provided
         if left_target_pos is not None:
+            # Check for namespace
+            left_ee_name = "rby1/end_effector_l" if "rby1/" in base_name else "end_effector_l"
             left_ee_task = mink.FrameTask(
-                frame_name="end_effector_l",
+                frame_name=left_ee_name,
                 frame_type="site",
                 position_cost=10000.0,  # Extremely high cost for sub-mm accuracy
                 orientation_cost=1000.0 if left_target_quat is not None else 0.0,
@@ -196,8 +200,10 @@ class RBY1IK:
         
         # Add right arm task if target provided
         if right_target_pos is not None:
+            # Check for namespace
+            right_ee_name = "rby1/end_effector_r" if "rby1/" in base_name else "end_effector_r"
             right_ee_task = mink.FrameTask(
-                frame_name="end_effector_r",
+                frame_name=right_ee_name,
                 frame_type="site",
                 position_cost=10000.0,  # Extremely high cost for sub-mm accuracy
                 orientation_cost=1000.0 if right_target_quat is not None else 0.0,
@@ -242,7 +248,7 @@ class RBY1IK:
             
             if left_target_pos is not None:
                 # Get actual end effector position
-                current_left_pos = self._get_site_position("end_effector_l", configuration.q)
+                current_left_pos = self._get_site_position(left_ee_name, configuration.q)
                 pos_error_left = np.linalg.norm(current_left_pos - left_target_pos)
                 errors["left_position_error"] = pos_error_left
                 if pos_error_left > tolerance:
@@ -250,7 +256,7 @@ class RBY1IK:
             
             if right_target_pos is not None:
                 # Get actual end effector position
-                current_right_pos = self._get_site_position("end_effector_r", configuration.q)
+                current_right_pos = self._get_site_position(right_ee_name, configuration.q)
                 pos_error_right = np.linalg.norm(current_right_pos - right_target_pos)
                 errors["right_position_error"] = pos_error_right
                 if pos_error_right > tolerance:
@@ -271,10 +277,10 @@ class RBY1IK:
         # Final check of actual errors
         final_errors = {}
         if left_target_pos is not None:
-            current_left_pos = self._get_site_position("end_effector_l", solution_qpos)
+            current_left_pos = self._get_site_position(left_ee_name, solution_qpos)
             final_errors["left_position_error"] = np.linalg.norm(current_left_pos - left_target_pos)
         if right_target_pos is not None:
-            current_right_pos = self._get_site_position("end_effector_r", solution_qpos)
+            current_right_pos = self._get_site_position(right_ee_name, solution_qpos)
             final_errors["right_position_error"] = np.linalg.norm(current_right_pos - right_target_pos)
         
         info = {

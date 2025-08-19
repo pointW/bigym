@@ -30,7 +30,7 @@ RBY1_LEFT_ARM = ArmConfig(
         "link_left_arm_6",
     ],
     wrist_dof=None,  # No separate wrist joint, arm_6 serves as wrist rotation
-    offset_euler=np.array([np.pi, np.pi/2, 0]),  # Same as H1 for gripper orientation
+    offset_euler=np.array([np.pi, 0, np.pi/2]),  # Same as H1 for gripper orientation
     offset_position=np.array([0, 0, 0]),  # Gripper attachment offset
 )
 
@@ -46,7 +46,7 @@ RBY1_RIGHT_ARM = ArmConfig(
         "link_right_arm_6",
     ],
     wrist_dof=None,  # No separate wrist joint
-    offset_euler=np.array([np.pi / 2, np.pi / 2, 0]),  # Same as H1 for gripper orientation
+    offset_euler=np.array([np.pi, 0, np.pi/2]),  # Same as H1 for gripper orientation
     offset_position=np.array([0, 0, 0]),  # Gripper attachment offset
 )
 
@@ -107,7 +107,7 @@ RBY1_FLOATING_BASE = FloatingBaseConfig(
 
 # Full body configuration (for completeness, though we mainly use upper body)
 RBY1_FULL_BODY = FullBodyConfig(
-    offset_position=np.array([0, 0, 0.3]),  # Base height is approximately 0.3m
+    offset_position=np.array([0, 0, 0]),  # Keep base at ground level for wheeled robot
     reset_state=np.array([
         # No wheel actuators anymore - base controlled via mocap
         # Torso (6 DOF) - neutral position
@@ -167,9 +167,10 @@ class RBY1(Robot):
                 pass
             
             if not existing_target:
-                # Add mocap body at world level
+                # Add mocap body at world level, at ground level
                 worldbody = self._mojo.root_element.mjcf.worldbody
-                base_target = worldbody.add("body", name="base_target", mocap=True)
+                base_target = worldbody.add("body", name="base_target", mocap=True, 
+                                           pos=[0, 0, 0])  # At ground level
                 base_target.add("geom", type="box", size=[0.1, 0.1, 0.05], 
                                contype=0, conaffinity=0, rgba=[0.8, 0.2, 0.2, 0.5])
                 
@@ -181,7 +182,11 @@ class RBY1(Robot):
                 # Reference the base body with namespace
                 # The body gets prefixed with "rby1/" when included in environment
                 base_body_name = "rby1/base"
-                self._mojo.root_element.mjcf.equality.add("weld", body1="base_target", body2=base_body_name)
+                # Add weld with explicit anchors at body origins (no offset)
+                self._mojo.root_element.mjcf.equality.add("weld", 
+                                                         body1="base_target", 
+                                                         body2=base_body_name,
+                                                         anchor="0 0 0")
 
     @property
     def config(self) -> RobotConfig:
@@ -206,9 +211,10 @@ class RBY1FineManipulation(Robot):
                 pass
             
             if not existing_target:
-                # Add mocap body at world level
+                # Add mocap body at world level, at ground level
                 worldbody = self._mojo.root_element.mjcf.worldbody
-                base_target = worldbody.add("body", name="base_target", mocap=True)
+                base_target = worldbody.add("body", name="base_target", mocap=True, 
+                                           pos=[0, 0, 0])  # At ground level
                 base_target.add("geom", type="box", size=[0.1, 0.1, 0.05], 
                                contype=0, conaffinity=0, rgba=[0.8, 0.2, 0.2, 0.5])
                 
@@ -220,7 +226,11 @@ class RBY1FineManipulation(Robot):
                 # Reference the base body with namespace
                 # The body gets prefixed with "rby1/" when included in environment
                 base_body_name = "rby1/base"
-                self._mojo.root_element.mjcf.equality.add("weld", body1="base_target", body2=base_body_name)
+                # Add weld with explicit anchors at body origins (no offset)
+                self._mojo.root_element.mjcf.equality.add("weld", 
+                                                         body1="base_target", 
+                                                         body2=base_body_name,
+                                                         anchor="0 0 0")
 
     @property
     def config(self) -> RobotConfig:
