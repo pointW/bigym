@@ -225,10 +225,9 @@ class RBY1IK:
             # Compute velocity
             vel = mink.solve_ik(configuration, tasks, dt, solver, damping)
             
-            # Don't zero base velocities - let the high posture cost handle it
-            # This allows small base movements when necessary for accuracy
-            # Only zero wheel velocities as they should be controlled separately
-            vel[6:10] = 0  # Wheel velocities (indices 6-9 in velocity space)
+            # Base is controlled via mocap body - zero base velocities
+            # The base movement is constrained by the base_task with high cost
+            vel[0:6] = 0  # Base velocities (controlled via mocap)
             
             # Integrate velocity
             configuration.integrate_inplace(vel, dt)

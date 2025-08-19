@@ -30,7 +30,8 @@ RBY1_LEFT_ARM = ArmConfig(
         "link_left_arm_6",
     ],
     wrist_dof=None,  # No separate wrist joint, arm_6 serves as wrist rotation
-    offset_euler=np.array([0, 0, 0]),  # Will adjust if needed
+    offset_euler=np.array([np.pi, np.pi/2, 0]),  # Same as H1 for gripper orientation
+    offset_position=np.array([0, 0, 0]),  # Gripper attachment offset
 )
 
 RBY1_RIGHT_ARM = ArmConfig(
@@ -45,17 +46,13 @@ RBY1_RIGHT_ARM = ArmConfig(
         "link_right_arm_6",
     ],
     wrist_dof=None,  # No separate wrist joint
-    offset_euler=np.array([0, 0, 0]),  # Will adjust if needed
+    offset_euler=np.array([np.pi / 2, np.pi / 2, 0]),  # Same as H1 for gripper orientation
+    offset_position=np.array([0, 0, 0]),  # Gripper attachment offset
 )
 
 # Actuator mapping for RBY1
-# Wheels are velocity controlled, everything else is position controlled
+# Note: Wheels are no longer actuated - base is controlled via mocap
 RBY1_ACTUATORS = {
-    # Wheel actuators (velocity controlled)
-    "wheel_fr": False,  # Front right wheel
-    "wheel_fl": False,  # Front left wheel
-    "wheel_rr": False,  # Rear right wheel
-    "wheel_rl": False,  # Rear left wheel
     # Torso actuators
     "torso_0": True,  # Torso joint 0 (roll)
     "torso_1": True,  # Torso joint 1 (pitch)
@@ -112,8 +109,7 @@ RBY1_FLOATING_BASE = FloatingBaseConfig(
 RBY1_FULL_BODY = FullBodyConfig(
     offset_position=np.array([0, 0, 0.3]),  # Base height is approximately 0.3m
     reset_state=np.array([
-        # Wheels (4 DOF) - not directly controlled in position mode
-        0, 0, 0, 0,
+        # No wheel actuators anymore - base controlled via mocap
         # Torso (6 DOF) - neutral position
         0, 0, 0, 0, 0, 0,
         # Right arm (7 DOF) - neutral/rest position
@@ -125,7 +121,7 @@ RBY1_FULL_BODY = FullBodyConfig(
 
 # Main robot configuration
 RBY1_CONFIG = RobotConfig(
-    model=ASSETS_PATH / "xmls" / "rby1" / "model_act.xml",
+    model=ASSETS_PATH / "rby1" / "model_act_consolidated.xml",
     delta_range=(-0.1, 0.1),
     position_kp=300,
     pelvis_body="base",  # RBY1 base body
@@ -140,7 +136,7 @@ RBY1_CONFIG = RobotConfig(
 
 # Fine manipulation variant with different gripper settings
 RBY1_FINE_MANIPULATION_CONFIG = RobotConfig(
-    model=ASSETS_PATH / "xmls" / "rby1" / "model_act.xml",
+    model=ASSETS_PATH / "rby1" / "model_act_consolidated.xml",
     delta_range=(-0.1, 0.1),
     position_kp=300,
     pelvis_body="base",
@@ -152,3 +148,81 @@ RBY1_FINE_MANIPULATION_CONFIG = RobotConfig(
     cameras=[],
     namespaces_to_remove=[],
 )
+
+
+class RBY1(Robot):
+    """RBY1 Robot with Robotiq grippers."""
+
+    def __init__(self, action_mode, mojo=None):
+        """Initialize RBY1 robot with mocap base control."""
+        super().__init__(action_mode, mojo)
+        
+        # Add mocap body for base control after robot is loaded
+        if self._mojo and self._mojo.root_element:
+            # Check if base_target doesn't already exist
+            existing_target = None
+            try:
+                existing_target = self._mojo.root_element.mjcf.find("body", "base_target")
+            except:
+                pass
+            
+            if not existing_target:
+                # Add mocap body at world level
+                worldbody = self._mojo.root_element.mjcf.worldbody
+                base_target = worldbody.add("body", name="base_target", mocap=True)
+                base_target.add("geom", type="box", size=[0.1, 0.1, 0.05], 
+                               contype=0, conaffinity=0, rgba=[0.8, 0.2, 0.2, 0.5])
+                
+                # Add weld equality constraint
+                # Get or create equality section
+                if not hasattr(self._mojo.root_element.mjcf, "equality"):
+                    self._mojo.root_element.mjcf.add("equality")
+                
+                # Reference the base body with namespace
+                # The body gets prefixed with "rby1/" when included in environment
+                base_body_name = "rby1/base"
+                self._mojo.root_element.mjcf.equality.add("weld", body1="base_target", body2=base_body_name)
+
+    @property
+    def config(self) -> RobotConfig:
+        """Get robot config."""
+        return RBY1_CONFIG
+
+
+class RBY1FineManipulation(Robot):
+    """RBY1 Robot with Robotiq gripper for fine manipulations."""
+
+    def __init__(self, action_mode, mojo=None):
+        """Initialize RBY1 robot with mocap base control."""
+        super().__init__(action_mode, mojo)
+        
+        # Add mocap body for base control after robot is loaded
+        if self._mojo and self._mojo.root_element:
+            # Check if base_target doesn't already exist
+            existing_target = None
+            try:
+                existing_target = self._mojo.root_element.mjcf.find("body", "base_target")
+            except:
+                pass
+            
+            if not existing_target:
+                # Add mocap body at world level
+                worldbody = self._mojo.root_element.mjcf.worldbody
+                base_target = worldbody.add("body", name="base_target", mocap=True)
+                base_target.add("geom", type="box", size=[0.1, 0.1, 0.05], 
+                               contype=0, conaffinity=0, rgba=[0.8, 0.2, 0.2, 0.5])
+                
+                # Add weld equality constraint
+                # Get or create equality section
+                if not hasattr(self._mojo.root_element.mjcf, "equality"):
+                    self._mojo.root_element.mjcf.add("equality")
+                
+                # Reference the base body with namespace
+                # The body gets prefixed with "rby1/" when included in environment
+                base_body_name = "rby1/base"
+                self._mojo.root_element.mjcf.equality.add("weld", body1="base_target", body2=base_body_name)
+
+    @property
+    def config(self) -> RobotConfig:
+        """Get robot config."""
+        return RBY1_FINE_MANIPULATION_CONFIG

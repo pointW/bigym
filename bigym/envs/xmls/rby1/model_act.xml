@@ -30,33 +30,33 @@
   <include file="./rby1.xml" />
 
   <actuator>
-    <velocity name="fr_wheel_act" joint="wheel_fr" ctrlrange="-3.14 3.14" />
+    <!-- <velocity name="fr_wheel_act" joint="wheel_fr" ctrlrange="-3.14 3.14" />
     <velocity name="fl_wheel_act" joint="wheel_fl" ctrlrange="-3.14 3.14" />
     <velocity name="rr_wheel_act" joint="wheel_rr" ctrlrange="-3.14 3.14" />
-    <velocity name="rl_wheel_act" joint="wheel_rl" ctrlrange="-3.14 3.14" />
+    <velocity name="rl_wheel_act" joint="wheel_rl" ctrlrange="-3.14 3.14" /> -->
 
-    <position name="link1_act" joint="torso_0" ctrlrange="-0.349066 0.349066" />
-    <position name="link2_act" joint="torso_1" ctrlrange="-1.0472 1.52173" />
-    <position name="link3_act" joint="torso_2" ctrlrange="-2.47837 1.5708" />
-    <position name="link4_act" joint="torso_3" ctrlrange="-0.785398 1.5708" />
-    <position name="link5_act" joint="torso_4" ctrlrange="-0.523599 0.523599" />
-    <position name="link6_act" joint="torso_5" ctrlrange="-1.5708 1.5708" />
+    <position name="torso_0" joint="torso_0" ctrlrange="-0.349066 0.349066" />
+    <position name="torso_1" joint="torso_1" ctrlrange="-1.0472 1.52173" />
+    <position name="torso_2" joint="torso_2" ctrlrange="-2.47837 1.5708" />
+    <position name="torso_3" joint="torso_3" ctrlrange="-0.785398 1.5708" />
+    <position name="torso_4" joint="torso_4" ctrlrange="-0.523599 0.523599" />
+    <position name="torso_5" joint="torso_5" ctrlrange="-1.5708 1.5708" />
 
-    <position name="right_arm_1_act" joint="right_arm_0" ctrlrange="-2.35619 2.35619" />
-    <position name="right_arm_2_act" joint="right_arm_1" ctrlrange="-3.14159 0.05" />
-    <position name="right_arm_3_act" joint="right_arm_2" ctrlrange="-2.0944 2.0944" />
-    <position name="right_arm_4_act" joint="right_arm_3" ctrlrange="-2.61799 0.01" />
-    <position name="right_arm_5_act" joint="right_arm_4" ctrlrange="-6.28319 6.28319" />
-    <position name="right_arm_6_act" joint="right_arm_5" ctrlrange="-1.74533 2.00713" />
-    <position name="right_arm_7_act" joint="right_arm_6" ctrlrange="-2.96706 2.96706" />
+    <position name="right_arm_0" joint="right_arm_0" ctrlrange="-2.35619 2.35619" />
+    <position name="right_arm_1" joint="right_arm_1" ctrlrange="-3.14159 0.05" />
+    <position name="right_arm_2" joint="right_arm_2" ctrlrange="-2.0944 2.0944" />
+    <position name="right_arm_3" joint="right_arm_3" ctrlrange="-2.61799 0.01" />
+    <position name="right_arm_4" joint="right_arm_4" ctrlrange="-6.28319 6.28319" />
+    <position name="right_arm_5" joint="right_arm_5" ctrlrange="-1.74533 2.00713" />
+    <position name="right_arm_6" joint="right_arm_6" ctrlrange="-2.96706 2.96706" />
 
-    <position name="left_arm_1_act" joint="left_arm_0" ctrlrange="-2.35619 2.35619" />
-    <position name="left_arm_2_act" joint="left_arm_1" ctrlrange="-0.05 3.14159" />
-    <position name="left_arm_3_act" joint="left_arm_2" ctrlrange="-2.0944 2.0944" />
-    <position name="left_arm_4_act" joint="left_arm_3" ctrlrange="-2.61799 0.01" />
-    <position name="left_arm_5_act" joint="left_arm_4" ctrlrange="-6.28319 6.28319" />
-    <position name="left_arm_6_act" joint="left_arm_5" ctrlrange="-1.74533 2.00713" />
-    <position name="left_arm_7_act" joint="left_arm_6" ctrlrange="-2.96706 2.96706" />
+    <position name="left_arm_0" joint="left_arm_0" ctrlrange="-2.35619 2.35619" />
+    <position name="left_arm_1" joint="left_arm_1" ctrlrange="-0.05 3.14159" />
+    <position name="left_arm_2" joint="left_arm_2" ctrlrange="-2.0944 2.0944" />
+    <position name="left_arm_3" joint="left_arm_3" ctrlrange="-2.61799 0.01" />
+    <position name="left_arm_4" joint="left_arm_4" ctrlrange="-6.28319 6.28319" />
+    <position name="left_arm_5" joint="left_arm_5" ctrlrange="-1.74533 2.00713" />
+    <position name="left_arm_6" joint="left_arm_6" ctrlrange="-2.96706 2.96706" />
 
     <position name="head_0_act" joint="head_0" ctrlrange="-0.523 0.523" />
     <position name="head_1_act" joint="head_1" ctrlrange="-0.35 1.57" />
@@ -70,5 +70,12 @@
     solimp="0.95 0.99 0.001 0.5 2" friction="0.05 0.001 0.05" />
     <!-- <geom name="base" pos="0 0 0.1" size="0.1 0.1 0.1" type="box" rgba="0.8 0.2 0.2 1" /> -->
     <camera name="front_far" pos="-1.5 0 2.0" xyaxes="0 -1 0 0.7 0 0.75" fovy="60" />
+    <body name="base_target" mocap="true">
+       <geom type="box" size="0.1 0.1 0.05" class="visual"/>
+    </body>
   </worldbody>
+
+  <equality>
+    <weld body1="base_target" body2="base" /> 
+  </equality>
 </mujoco>
