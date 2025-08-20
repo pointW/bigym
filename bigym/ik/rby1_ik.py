@@ -180,10 +180,11 @@ class RBY1IK:
         if left_target_pos is not None:
             # Check for namespace
             left_ee_name = "rby1/end_effector_l" if "rby1/" in base_name else "end_effector_l"
+            
             left_ee_task = mink.FrameTask(
                 frame_name=left_ee_name,
                 frame_type="site",
-                position_cost=10000.0,  # Extremely high cost for sub-mm accuracy
+                position_cost=10000.0,  # High cost for accurate tracking
                 orientation_cost=1000.0 if left_target_quat is not None else 0.0,
                 lm_damping=1e-5,  # Minimal damping for best accuracy
             )
@@ -202,10 +203,11 @@ class RBY1IK:
         if right_target_pos is not None:
             # Check for namespace
             right_ee_name = "rby1/end_effector_r" if "rby1/" in base_name else "end_effector_r"
+            
             right_ee_task = mink.FrameTask(
                 frame_name=right_ee_name,
                 frame_type="site",
-                position_cost=10000.0,  # Extremely high cost for sub-mm accuracy
+                position_cost=10000.0,  # High cost for accurate tracking
                 orientation_cost=1000.0 if right_target_quat is not None else 0.0,
                 lm_damping=1e-5,  # Minimal damping for best accuracy
             )

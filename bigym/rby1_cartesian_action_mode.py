@@ -67,24 +67,15 @@ class RBY1CartesianActionMode(ActionMode):
     
     def __init__(
         self,
-        floating_base: bool = True,
         position_limits: tuple[float, float] = (-2.0, 2.0),
         block_until_reached: bool = False,
     ):
         """Initialize RBY1 Cartesian action mode.
         
         Args:
-            floating_base: Must be True for RBY1 (wheeled robot always controls base).
-                           Raises error if False.
             position_limits: Min/max limits for end-effector positions
             block_until_reached: Whether to block until position is reached
         """
-        # RBY1 is a wheeled robot - must always control the base
-        if not floating_base:
-            raise ValueError(
-                "RBY1CartesianActionMode requires floating_base=True since RBY1 is a wheeled robot. "
-                "The base must always be controlled."
-            )
         
         # Initialize parent with no floating DOFs (we handle base control manually)
         super().__init__(floating_base=False, floating_dofs=None)
@@ -270,10 +261,11 @@ class RBY1CartesianActionMode(ActionMode):
         right_arm_joints = ik_solution[actuated_start+6:actuated_start+13]
         left_arm_joints = ik_solution[actuated_start+13:actuated_start+20]
         
-        # Apply joint positions to actuators
+        # Apply joint positions to actuators via ctrl (absolute position control)
         joint_positions = np.concatenate([torso_joints, right_arm_joints, left_arm_joints])
         
         for i, actuator in enumerate(self._robot.limb_actuators):
+            # Set ctrl to the target position (absolute mode)
             actuator_bound = self._mojo.physics.bind(actuator)
             actuator_bound.ctrl = joint_positions[i]
         
@@ -312,12 +304,22 @@ class RBY1CartesianActionMode(ActionMode):
                     bound_joint.qvel *= 0
                     bound_joint.qacc *= 0
                 
+                # Set ctrl to match the reset position
                 bound_actuator = self._mojo.physics.bind(actuator)
                 bound_actuator.ctrl = value
         
-        # Initialize IK solver after reset to capture correct initial state
-        if self._ik_solver is None and self._robot is not None and self._mojo is not None:
-            self._initialize_ik_solver()
+        # Reset base_target mocap position to origin
+        if self._base_target_body_id is not None:
+            model = self._mojo.physics.model._model
+            data = self._mojo.physics.data._data
+            mocap_id = model.body_mocapid[self._base_target_body_id]
+            if mocap_id >= 0:
+                # Reset mocap to origin
+                data.mocap_pos[mocap_id] = [0, 0, 0]
+                data.mocap_quat[mocap_id] = [1, 0, 0, 0]  # Identity quaternion
+        
+        # Clear IK solver to force reinitialization
+        self._ik_solver = None
         
     def _initialize_ik_solver(self):
         """Initialize the RBY1 IK solver."""
