@@ -246,14 +246,14 @@ class RBY1WholeBodyIK:
         base_ground_task.set_target(mink.SE3.from_matrix(base_target_matrix))
         tasks.append(base_ground_task)
         
-        # 3. Upper body upright orientation (weak regularization)
-        # Constrain torso_5 link to point upward
+        # 3. Upper body upright orientation (STRONG constraint for stability)
+        # Constrain torso_5 link to point upward - CRITICAL for preventing falls
         torso_upright_task = mink.FrameTask(
             frame_name=self.torso5_name,
             frame_type="body",
             position_cost=0.0,  # Don't constrain position
-            orientation_cost=10.0,  # Weak regularization for upright posture
-            lm_damping=1e-3,
+            orientation_cost=1000.0,  # STRONG constraint to maintain upright posture
+            lm_damping=1e-4,
         )
         # Set target to upright orientation (identity rotation)
         upright_matrix = np.eye(4)

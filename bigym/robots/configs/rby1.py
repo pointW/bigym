@@ -103,6 +103,14 @@ RBY1_FLOATING_BASE = FloatingBaseConfig(
     delta_range_position=(-0.2, 0.2),  # Delta range for position control
     delta_range_rotation=(-0.5, 0.5),  # Delta range for rotation control
     animated_legs_class=None,  # No animated legs for wheeled robot
+    reset_state=np.array([
+        # Torso (6 DOF) - neutral position
+        0, 0, 0, 0, 0, 0,
+        # Right arm (7 DOF) - bent elbow, hand forward at comfortable height
+        0, 0, 0, -1.57, 0, 0.5, 0,
+        # Left arm (7 DOF) - bent elbow, hand forward at comfortable height
+        0, 0, 0, -1.57, 0, 0.5, 0,
+    ]),
 )
 
 # Full body configuration (for completeness, though we mainly use upper body)
@@ -112,10 +120,10 @@ RBY1_FULL_BODY = FullBodyConfig(
         # No wheel actuators anymore - base controlled via mocap
         # Torso (6 DOF) - neutral position
         0, 0, 0, 0, 0, 0,
-        # Right arm (7 DOF) - neutral/rest position
-        0, 0, 0, 0, 0, 0, 0,
-        # Left arm (7 DOF) - neutral/rest position
-        0, 0, 0, 0, 0, 0, 0,
+        # Right arm (7 DOF) - bent elbow, hand forward at comfortable height
+        0, 0, 0, -1.57, 0, 0.5, 0,
+        # Left arm (7 DOF) - bent elbow, hand forward at comfortable height
+        0, 0, 0, -1.57, 0, 0.5, 0,
     ]),
 )
 
@@ -158,6 +166,7 @@ class RBY1(Robot):
         super().__init__(action_mode, mojo)
         
         # Fix limb_actuators for RBY1 with namespace
+        # This is needed for custom action modes that don't populate limb_actuators
         self._fix_limb_actuators()
         
         # Add mocap body for base control after robot is loaded
@@ -203,25 +212,24 @@ class RBY1(Robot):
         if self._limb_actuators:
             return
         
-        # Get all actuators from root element MJCF
-        if hasattr(self._mojo, 'root_element') and hasattr(self._mojo.root_element, 'find_all'):
-            # Use MJCF find_all if available
-            all_actuators = self._mojo.root_element.find_all("actuator")
-        else:
-            # Fall back to searching through actuator elements
-            all_actuators = []
-            if hasattr(self._mojo, 'root_element') and hasattr(self._mojo.root_element, 'actuator'):
-                # Iterate through actuator elements
-                for actuator in self._mojo.root_element.actuator.children:
-                    all_actuators.append(actuator)
+        # Get all actuators from root element MJCF  
+        all_actuators = []
+        if hasattr(self._mojo, 'root_element'):
+            root = self._mojo.root_element
+            # Use mjcf attribute if available
+            if hasattr(root, 'mjcf'):
+                root = root.mjcf
+            # Now find all actuators
+            if hasattr(root, 'find_all'):
+                all_actuators = root.find_all("actuator")
         
-        # Expected actuator names (with namespace)
+        # Expected actuator names (WITHOUT namespace - actuators don't have rby1/ prefix)
         expected_names = [
-            "rby1/torso_0", "rby1/torso_1", "rby1/torso_2", "rby1/torso_3", "rby1/torso_4", "rby1/torso_5",
-            "rby1/right_arm_0", "rby1/right_arm_1", "rby1/right_arm_2", "rby1/right_arm_3", 
-            "rby1/right_arm_4", "rby1/right_arm_5", "rby1/right_arm_6",
-            "rby1/left_arm_0", "rby1/left_arm_1", "rby1/left_arm_2", "rby1/left_arm_3",
-            "rby1/left_arm_4", "rby1/left_arm_5", "rby1/left_arm_6"
+            "torso_0", "torso_1", "torso_2", "torso_3", "torso_4", "torso_5",
+            "right_arm_0", "right_arm_1", "right_arm_2", "right_arm_3", 
+            "right_arm_4", "right_arm_5", "right_arm_6",
+            "left_arm_0", "left_arm_1", "left_arm_2", "left_arm_3",
+            "left_arm_4", "left_arm_5", "left_arm_6"
         ]
         
         for actuator in all_actuators:
@@ -290,25 +298,24 @@ class RBY1FineManipulation(Robot):
         if self._limb_actuators:
             return
         
-        # Get all actuators from root element MJCF
-        if hasattr(self._mojo, 'root_element') and hasattr(self._mojo.root_element, 'find_all'):
-            # Use MJCF find_all if available
-            all_actuators = self._mojo.root_element.find_all("actuator")
-        else:
-            # Fall back to searching through actuator elements
-            all_actuators = []
-            if hasattr(self._mojo, 'root_element') and hasattr(self._mojo.root_element, 'actuator'):
-                # Iterate through actuator elements
-                for actuator in self._mojo.root_element.actuator.children:
-                    all_actuators.append(actuator)
+        # Get all actuators from root element MJCF  
+        all_actuators = []
+        if hasattr(self._mojo, 'root_element'):
+            root = self._mojo.root_element
+            # Use mjcf attribute if available
+            if hasattr(root, 'mjcf'):
+                root = root.mjcf
+            # Now find all actuators
+            if hasattr(root, 'find_all'):
+                all_actuators = root.find_all("actuator")
         
-        # Expected actuator names (with namespace)
+        # Expected actuator names (WITHOUT namespace - actuators don't have rby1/ prefix)
         expected_names = [
-            "rby1/torso_0", "rby1/torso_1", "rby1/torso_2", "rby1/torso_3", "rby1/torso_4", "rby1/torso_5",
-            "rby1/right_arm_0", "rby1/right_arm_1", "rby1/right_arm_2", "rby1/right_arm_3", 
-            "rby1/right_arm_4", "rby1/right_arm_5", "rby1/right_arm_6",
-            "rby1/left_arm_0", "rby1/left_arm_1", "rby1/left_arm_2", "rby1/left_arm_3",
-            "rby1/left_arm_4", "rby1/left_arm_5", "rby1/left_arm_6"
+            "torso_0", "torso_1", "torso_2", "torso_3", "torso_4", "torso_5",
+            "right_arm_0", "right_arm_1", "right_arm_2", "right_arm_3", 
+            "right_arm_4", "right_arm_5", "right_arm_6",
+            "left_arm_0", "left_arm_1", "left_arm_2", "left_arm_3",
+            "left_arm_4", "left_arm_5", "left_arm_6"
         ]
         
         for actuator in all_actuators:
