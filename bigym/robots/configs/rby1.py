@@ -157,49 +157,8 @@ class RBY1(Robot):
         """Initialize RBY1 robot with mocap base control."""
         super().__init__(action_mode, mojo)
         
-        # Add mocap body for base control after robot is loaded
-        if self._mojo and self._mojo.root_element:
-            # Check if base_target doesn't already exist
-            existing_target = None
-            try:
-                existing_target = self._mojo.root_element.mjcf.find("body", "base_target")
-            except:
-                pass
-            
-            if not existing_target:
-                # Add mocap body at world level, at ground level
-                worldbody = self._mojo.root_element.mjcf.worldbody
-                base_target = worldbody.add("body", name="base_target", mocap=True, 
-                                           pos=[0, 0, 0])  # At ground level
-                base_target.add("geom", type="box", size=[0.1, 0.1, 0.05], 
-                               contype=0, conaffinity=0, rgba=[0.8, 0.2, 0.2, 0.5])
-                
-                # Add weld equality constraint
-                # Get or create equality section
-                if not hasattr(self._mojo.root_element.mjcf, "equality"):
-                    self._mojo.root_element.mjcf.add("equality")
-                
-                # Reference the base body with namespace
-                # The body gets prefixed with "rby1/" when included in environment
-                base_body_name = "rby1/base"
-                # Add weld with explicit anchors at body origins (no offset)
-                self._mojo.root_element.mjcf.equality.add("weld", 
-                                                         body1="base_target", 
-                                                         body2=base_body_name,
-                                                         anchor="0 0 0")
-
-    @property
-    def config(self) -> RobotConfig:
-        """Get robot config."""
-        return RBY1_CONFIG
-
-
-class RBY1FineManipulation(Robot):
-    """RBY1 Robot with Robotiq gripper for fine manipulations."""
-
-    def __init__(self, action_mode, mojo=None):
-        """Initialize RBY1 robot with mocap base control."""
-        super().__init__(action_mode, mojo)
+        # Fix limb_actuators for RBY1 with namespace
+        self._fix_limb_actuators()
         
         # Add mocap body for base control after robot is loaded
         if self._mojo and self._mojo.root_element:
@@ -218,20 +177,147 @@ class RBY1FineManipulation(Robot):
                 base_target.add("geom", type="box", size=[0.1, 0.1, 0.05], 
                                contype=0, conaffinity=0, rgba=[0.8, 0.2, 0.2, 0.5])
                 
-                # Add weld equality constraint
-                # Get or create equality section
-                if not hasattr(self._mojo.root_element.mjcf, "equality"):
-                    self._mojo.root_element.mjcf.add("equality")
-                
-                # Reference the base body with namespace
-                # The body gets prefixed with "rby1/" when included in environment
-                base_body_name = "rby1/base"
-                # Add weld with explicit anchors at body origins (no offset)
-                self._mojo.root_element.mjcf.equality.add("weld", 
-                                                         body1="base_target", 
-                                                         body2=base_body_name,
-                                                         anchor="0 0 0")
+                # Add weld constraint to connect mocap to base
+                # This is needed for the mocap to actually control the robot base
+                # Add weld constraint between base_target and robot base
+                # The robot base is namespaced as "rby1/base"
+                self._mojo.root_element.mjcf.equality.add(
+                    "weld", 
+                    body1="base_target", 
+                    body2="rby1/base",
+                    solimp=[0.95, 0.99, 0.001], 
+                    solref=[0.02, 1]
+                )
 
+    def _fix_limb_actuators(self):
+        """Fix limb actuators for RBY1 with namespace."""
+        if not hasattr(self, '_mojo') or not self._mojo:
+            return
+        
+        # RBY1 actuators have "rby1/" prefix in environment context
+        # but config doesn't have the prefix, so we need to manually populate limb_actuators
+        if not hasattr(self, '_limb_actuators'):
+            self._limb_actuators = []
+        
+        # If limb_actuators is already populated (by parent), don't override
+        if self._limb_actuators:
+            return
+        
+        # Get all actuators from root element MJCF
+        if hasattr(self._mojo, 'root_element') and hasattr(self._mojo.root_element, 'find_all'):
+            # Use MJCF find_all if available
+            all_actuators = self._mojo.root_element.find_all("actuator")
+        else:
+            # Fall back to searching through actuator elements
+            all_actuators = []
+            if hasattr(self._mojo, 'root_element') and hasattr(self._mojo.root_element, 'actuator'):
+                # Iterate through actuator elements
+                for actuator in self._mojo.root_element.actuator.children:
+                    all_actuators.append(actuator)
+        
+        # Expected actuator names (with namespace)
+        expected_names = [
+            "rby1/torso_0", "rby1/torso_1", "rby1/torso_2", "rby1/torso_3", "rby1/torso_4", "rby1/torso_5",
+            "rby1/right_arm_0", "rby1/right_arm_1", "rby1/right_arm_2", "rby1/right_arm_3", 
+            "rby1/right_arm_4", "rby1/right_arm_5", "rby1/right_arm_6",
+            "rby1/left_arm_0", "rby1/left_arm_1", "rby1/left_arm_2", "rby1/left_arm_3",
+            "rby1/left_arm_4", "rby1/left_arm_5", "rby1/left_arm_6"
+        ]
+        
+        for actuator in all_actuators:
+            if hasattr(actuator, 'name') and actuator.name in expected_names:
+                self._limb_actuators.append(actuator)
+        
+        # Sort by expected order
+        self._limb_actuators.sort(key=lambda a: expected_names.index(a.name) if a.name in expected_names else 999)
+    
+    @property
+    def config(self) -> RobotConfig:
+        """Get robot config."""
+        return RBY1_CONFIG
+
+
+class RBY1FineManipulation(Robot):
+    """RBY1 Robot with Robotiq gripper for fine manipulations."""
+
+    def __init__(self, action_mode, mojo=None):
+        """Initialize RBY1 robot with mocap base control."""
+        super().__init__(action_mode, mojo)
+        
+        # Fix limb_actuators for RBY1 with namespace
+        self._fix_limb_actuators()
+        
+        # Add mocap body for base control after robot is loaded
+        if self._mojo and self._mojo.root_element:
+            # Check if base_target doesn't already exist
+            existing_target = None
+            try:
+                existing_target = self._mojo.root_element.mjcf.find("body", "base_target")
+            except:
+                pass
+            
+            if not existing_target:
+                # Add mocap body at world level, at ground level
+                worldbody = self._mojo.root_element.mjcf.worldbody
+                base_target = worldbody.add("body", name="base_target", mocap=True, 
+                                           pos=[0, 0, 0])  # At ground level
+                base_target.add("geom", type="box", size=[0.1, 0.1, 0.05], 
+                               contype=0, conaffinity=0, rgba=[0.8, 0.2, 0.2, 0.5])
+                
+                # Add weld constraint to connect mocap to base
+                # This is needed for the mocap to actually control the robot base
+                # Add weld constraint between base_target and robot base
+                # The robot base is namespaced as "rby1/base"
+                self._mojo.root_element.mjcf.equality.add(
+                    "weld", 
+                    body1="base_target", 
+                    body2="rby1/base",
+                    solimp=[0.95, 0.99, 0.001], 
+                    solref=[0.02, 1]
+                )
+
+    def _fix_limb_actuators(self):
+        """Fix limb actuators for RBY1 with namespace."""
+        if not hasattr(self, '_mojo') or not self._mojo:
+            return
+        
+        # RBY1 actuators have "rby1/" prefix in environment context
+        # but config doesn't have the prefix, so we need to manually populate limb_actuators
+        if not hasattr(self, '_limb_actuators'):
+            self._limb_actuators = []
+        
+        # If limb_actuators is already populated (by parent), don't override
+        if self._limb_actuators:
+            return
+        
+        # Get all actuators from root element MJCF
+        if hasattr(self._mojo, 'root_element') and hasattr(self._mojo.root_element, 'find_all'):
+            # Use MJCF find_all if available
+            all_actuators = self._mojo.root_element.find_all("actuator")
+        else:
+            # Fall back to searching through actuator elements
+            all_actuators = []
+            if hasattr(self._mojo, 'root_element') and hasattr(self._mojo.root_element, 'actuator'):
+                # Iterate through actuator elements
+                for actuator in self._mojo.root_element.actuator.children:
+                    all_actuators.append(actuator)
+        
+        # Expected actuator names (with namespace)
+        expected_names = [
+            "rby1/torso_0", "rby1/torso_1", "rby1/torso_2", "rby1/torso_3", "rby1/torso_4", "rby1/torso_5",
+            "rby1/right_arm_0", "rby1/right_arm_1", "rby1/right_arm_2", "rby1/right_arm_3", 
+            "rby1/right_arm_4", "rby1/right_arm_5", "rby1/right_arm_6",
+            "rby1/left_arm_0", "rby1/left_arm_1", "rby1/left_arm_2", "rby1/left_arm_3",
+            "rby1/left_arm_4", "rby1/left_arm_5", "rby1/left_arm_6"
+        ]
+        
+        for actuator in all_actuators:
+            if hasattr(actuator, 'name') and actuator.name in expected_names:
+                self._limb_actuators.append(actuator)
+        
+        # Sort by expected order
+        self._limb_actuators.sort(key=lambda a: expected_names.index(a.name) if a.name in expected_names else 999)
+    
     @property
     def config(self) -> RobotConfig:
         """Get robot config."""

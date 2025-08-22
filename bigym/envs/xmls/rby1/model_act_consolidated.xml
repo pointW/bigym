@@ -1,5 +1,5 @@
 <mujoco model="rby1">
-  <!-- <option timestep="0.002" solver="CG" iterations="30" tolerance="1e-6" /> -->
+  <option timestep="0.001" solver="Newton" iterations="50" tolerance="1e-6" />
   <compiler angle="radian"/>
   <size memory="32M"/>
   <visual>
@@ -9,8 +9,8 @@
   </visual>
   <default>
     <material shininess="0.25"/>
-    <joint range="-3.14 3.14" armature="10" damping="50"/>
-    <general ctrllimited="true" ctrlrange="-100 100" biastype="affine" gainprm="4000" biasprm="0 -4000 -400"/>
+    <joint range="-3.14 3.14" armature="0.1" damping="0.5"/>
+    <position ctrllimited="true" kp="4000" kv="400"/>
     <default class="visual">
       <material shininess="0.5"/>
       <joint range="0 0" armature="0" damping="0"/>
@@ -639,27 +639,27 @@
     </body>
   </worldbody>
   <actuator>
-    <general name="torso_0" joint="torso_0" ctrlrange="-0.349066 0.349066"/>
-    <general name="torso_1" joint="torso_1" ctrlrange="-1.0472 1.52173"/>
-    <general name="torso_2" joint="torso_2" ctrlrange="-2.47837 1.5708"/>
-    <general name="torso_3" joint="torso_3" ctrlrange="-0.785398 1.5708"/>
-    <general name="torso_4" joint="torso_4" ctrlrange="-0.523599 0.523599"/>
-    <general name="torso_5" joint="torso_5" ctrlrange="-1.5708 1.5708"/>
-    <general name="right_arm_0" joint="right_arm_0" ctrlrange="-2.35619 2.35619"/>
-    <general name="right_arm_1" joint="right_arm_1" ctrlrange="-3.14159 0.05"/>
-    <general name="right_arm_2" joint="right_arm_2" ctrlrange="-2.0944 2.0944"/>
-    <general name="right_arm_3" joint="right_arm_3" ctrlrange="-2.61799 0.01"/>
-    <general name="right_arm_4" joint="right_arm_4" ctrlrange="-6.28319 6.28319"/>
-    <general name="right_arm_5" joint="right_arm_5" ctrlrange="-1.74533 2.00713"/>
-    <general name="right_arm_6" joint="right_arm_6" ctrlrange="-2.96706 2.96706"/>
-    <general name="left_arm_0" joint="left_arm_0" ctrlrange="-2.35619 2.35619"/>
-    <general name="left_arm_1" joint="left_arm_1" ctrlrange="-0.05 3.14159"/>
-    <general name="left_arm_2" joint="left_arm_2" ctrlrange="-2.0944 2.0944"/>
-    <general name="left_arm_3" joint="left_arm_3" ctrlrange="-2.61799 0.01"/>
-    <general name="left_arm_4" joint="left_arm_4" ctrlrange="-6.28319 6.28319"/>
-    <general name="left_arm_5" joint="left_arm_5" ctrlrange="-1.74533 2.00713"/>
-    <general name="left_arm_6" joint="left_arm_6" ctrlrange="-2.96706 2.96706"/>
-    <general name="head_0_act" joint="head_0" ctrlrange="-0.523 0.523"/>
-    <general name="head_1_act" joint="head_1" ctrlrange="-0.35 1.57"/>
+    <position name="torso_0" joint="torso_0" kp="4000" kv="400" ctrlrange="-0.349066 0.349066"/>
+    <position name="torso_1" joint="torso_1" kp="4000" kv="400" ctrlrange="-1.0472 1.52173"/>
+    <position name="torso_2" joint="torso_2" kp="4000" kv="400" ctrlrange="-2.47837 1.5708"/>
+    <position name="torso_3" joint="torso_3" kp="4000" kv="400" ctrlrange="-0.785398 1.5708"/>
+    <position name="torso_4" joint="torso_4" kp="4000" kv="400" ctrlrange="-0.523599 0.523599"/>
+    <position name="torso_5" joint="torso_5" kp="4000" kv="400" ctrlrange="-1.5708 1.5708"/>
+    <position name="right_arm_0" joint="right_arm_0" kp="4000" kv="400" ctrlrange="-2.35619 2.35619"/>
+    <position name="right_arm_1" joint="right_arm_1" kp="4000" kv="400" ctrlrange="-3.14159 0.05"/>
+    <position name="right_arm_2" joint="right_arm_2" kp="4000" kv="400" ctrlrange="-2.0944 2.0944"/>
+    <position name="right_arm_3" joint="right_arm_3" kp="4000" kv="400" ctrlrange="-2.61799 0.01"/>
+    <position name="right_arm_4" joint="right_arm_4" kp="4000" kv="400" ctrlrange="-6.28319 6.28319"/>
+    <position name="right_arm_5" joint="right_arm_5" kp="4000" kv="400" ctrlrange="-1.74533 2.00713"/>
+    <position name="right_arm_6" joint="right_arm_6" kp="4000" kv="400" ctrlrange="-2.96706 2.96706"/>
+    <position name="left_arm_0" joint="left_arm_0" kp="4000" kv="400" ctrlrange="-2.35619 2.35619"/>
+    <position name="left_arm_1" joint="left_arm_1" kp="4000" kv="400" ctrlrange="-0.05 3.14159"/>
+    <position name="left_arm_2" joint="left_arm_2" kp="4000" kv="400" ctrlrange="-2.0944 2.0944"/>
+    <position name="left_arm_3" joint="left_arm_3" kp="4000" kv="400" ctrlrange="-2.61799 0.01"/>
+    <position name="left_arm_4" joint="left_arm_4" kp="4000" kv="400" ctrlrange="-6.28319 6.28319"/>
+    <position name="left_arm_5" joint="left_arm_5" kp="4000" kv="400" ctrlrange="-1.74533 2.00713"/>
+    <position name="left_arm_6" joint="left_arm_6" kp="4000" kv="400" ctrlrange="-2.96706 2.96706"/>
+    <position name="head_0_act" joint="head_0" kp="4000" kv="400" ctrlrange="-0.523 0.523"/>
+    <position name="head_1_act" joint="head_1" kp="4000" kv="400" ctrlrange="-0.35 1.57"/>
   </actuator>
 </mujoco>
