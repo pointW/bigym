@@ -57,28 +57,38 @@ class RBY1IK:
                 self.wheel_qpos_indices.append(qpos_adr)
         
         # Torso joints (controlled by IK)
-        self.torso_joint_names = [f"torso_{i}" for i in range(6)]
+        # Try with namespace first, then without
+        self.torso_joint_names = [f"rby1/torso_{i}" for i in range(6)]
         self.torso_qpos_indices = []
         for name in self.torso_joint_names:
             joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
+            if joint_id < 0:  # Try without namespace
+                name = name.replace("rby1/", "")
+                joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
             if joint_id >= 0:
                 qpos_adr = self.model.jnt_qposadr[joint_id]
                 self.torso_qpos_indices.append(qpos_adr)
         
         # Left arm joints (controlled by IK)
-        self.left_arm_joint_names = [f"left_arm_{i}" for i in range(7)]
+        self.left_arm_joint_names = [f"rby1/left_arm_{i}" for i in range(7)]
         self.left_arm_qpos_indices = []
         for name in self.left_arm_joint_names:
             joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
+            if joint_id < 0:  # Try without namespace
+                name = name.replace("rby1/", "")
+                joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
             if joint_id >= 0:
                 qpos_adr = self.model.jnt_qposadr[joint_id]
                 self.left_arm_qpos_indices.append(qpos_adr)
         
         # Right arm joints (controlled by IK)
-        self.right_arm_joint_names = [f"right_arm_{i}" for i in range(7)]
+        self.right_arm_joint_names = [f"rby1/right_arm_{i}" for i in range(7)]
         self.right_arm_qpos_indices = []
         for name in self.right_arm_joint_names:
             joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
+            if joint_id < 0:  # Try without namespace
+                name = name.replace("rby1/", "")
+                joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
             if joint_id >= 0:
                 qpos_adr = self.model.jnt_qposadr[joint_id]
                 self.right_arm_qpos_indices.append(qpos_adr)
@@ -101,6 +111,7 @@ class RBY1IK:
         current_qpos: Optional[np.ndarray] = None,
         max_iterations: int = 100,
         tolerance: float = 1e-3,
+        enforce_upright: bool = True,
     ) -> Tuple[np.ndarray, bool, Dict]:
         """Solve IK for given targets.
         
@@ -114,6 +125,7 @@ class RBY1IK:
             current_qpos: Current joint positions (if None, uses data.qpos)
             max_iterations: Maximum IK iterations
             tolerance: Convergence tolerance
+            enforce_upright: If True, enforce upright torso posture (also encourages symmetry)
             
         Returns:
             Tuple of (solution_qpos, success, info_dict)
@@ -161,7 +173,29 @@ class RBY1IK:
         base_task.set_target(mink.SE3.from_matrix(base_matrix))
         tasks.append(base_task)
         
-        # Add posture task for joint stability
+        # Add upright torso constraint if requested
+        if enforce_upright:
+            # Check if we have torso5 link
+            torso5_name = "rby1/link_torso_5" if "rby1/" in base_name else "link_torso_5"
+            try:
+                torso5_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, torso5_name)
+                if torso5_id >= 0:
+                    torso_upright_task = mink.FrameTask(
+                        frame_name=torso5_name,
+                        frame_type="body",
+                        position_cost=0.0,  # Don't constrain position
+                        orientation_cost=1000.0,  # Strong constraint for upright posture
+                        lm_damping=1e-4,
+                    )
+                    # Set target to upright orientation (identity rotation)
+                    upright_matrix = np.eye(4)
+                    upright_matrix[:3, 3] = [0, 0, 1.0]  # Dummy position
+                    torso_upright_task.set_target(mink.SE3.from_matrix(upright_matrix))
+                    tasks.append(torso_upright_task)
+            except:
+                pass  # Skip if torso5 not found
+        
+        # Standard posture task for joint stability
         posture_task = mink.PostureTask(
             model=self.model,
             cost=1.0  # Low cost, just for redundancy resolution
