@@ -511,15 +511,19 @@
                                   <geom class="visual" material="69,69,69" mesh="FT_SENSOR_R_10"/>
                                   <geom class="collision" size="0.04" pos="0 0 -0.0275"/>
                                 </body>
-                                <body name="EE_BODY_R" pos="0 0 -0.1548">
+                                <body name="EE_BODY_R" pos="0 0 -0.1548" euler="1.5708 1.5708 -1.5708">
                                   <inertial pos="0 0 0" mass="0" diaginertia="0 0 0"/>
-                                  <geom class="visual" material="70,70,70" mesh="EE_BODY"/>
+                                  <site name="end_effector_r" pos="0 0 0" size="0.01"/>
+                                  <!-- <geom class="visual" material="70,70,70" mesh="EE_BODY"/>
                                   <geom class="collision" size="0.04" pos="0.025 0 -0.04"/>
                                   <geom class="collision" size="0.04" pos="0 0 -0.04"/>
                                   <geom class="collision" size="0.04" pos="-0.025 0 -0.04"/>
                                   <geom class="collision" size="0.02" pos="0.05 -0.003 -0.06"/>
                                   <geom class="collision" size="0.02" pos="-0.05 0.003 -0.06"/>
-                                  <site name="end_effector_r" pos="0 0 0" size="0.01"/>
+                                  <body name="end_effector_dummy_r" pos="0 0 0" euler="0 1.5708 0">
+                                    <inertial pos="0 0 0" mass="1e-10" diaginertia="1e-10 1e-10 1e-10"/>
+                                    <site name="end_effector_r" pos="0 0 0" size="0.01"/>
+                                  </body> -->
                                 </body>
                               </body>
                             </body>
@@ -599,15 +603,19 @@
                                   <geom class="visual" material="69,69,69" mesh="FT_SENSOR_L_10"/>
                                   <geom class="collision" size="0.04" pos="0 0 -0.0275"/>
                                 </body>
-                                <body name="EE_BODY_L" pos="0 0 -0.1548">
+                                <body name="EE_BODY_L" pos="0 0 -0.1548" euler="1.5708 1.5708 -1.5708">
                                   <inertial pos="0 0 0" mass="0" diaginertia="0 0 0"/>
-                                  <geom class="visual" material="70,70,70" mesh="EE_BODY"/>
+                                  <site name="end_effector_l" pos="0 0 0" size="0.01"/>
+                                  <!-- <geom class="visual" material="70,70,70" mesh="EE_BODY"/>
                                   <geom class="collision" size="0.04" pos="0.025 0 -0.04"/>
                                   <geom class="collision" size="0.04" pos="0 0 -0.04"/>
                                   <geom class="collision" size="0.04" pos="-0.025 0 -0.04"/>
                                   <geom class="collision" size="0.02" pos="0.05 -0.003 -0.06"/>
                                   <geom class="collision" size="0.02" pos="-0.05 0.003 -0.06"/>
-                                  <site name="end_effector_l" pos="0 0 0" size="0.01"/>
+                                  <body name="end_effector_dummy_l" pos="0 0 -0.05" euler="1.5708 0 -1.5708">
+                                    <inertial pos="0 0 0" mass="1e-10" diaginertia="1e-10 1e-10 1e-10"/>
+                                    <site name="end_effector_l" pos="0 0 0" size="0.01"/>
+                                  </body> -->
                                 </body>
                               </body>
                             </body>

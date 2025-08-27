@@ -30,7 +30,7 @@ RBY1_LEFT_ARM = ArmConfig(
         "link_left_arm_6",
     ],
     wrist_dof=None,  # No separate wrist joint, arm_6 serves as wrist rotation
-    offset_euler=np.array([np.pi, 0, np.pi/2]),  # Same as H1 for gripper orientation
+    offset_euler=np.array([np.pi / 2, np.pi / 2, 0]),
     offset_position=np.array([0, 0, 0]),  # Gripper attachment offset
 )
 
@@ -46,7 +46,7 @@ RBY1_RIGHT_ARM = ArmConfig(
         "link_right_arm_6",
     ],
     wrist_dof=None,  # No separate wrist joint
-    offset_euler=np.array([np.pi, 0, np.pi/2]),  # Same as H1 for gripper orientation
+    offset_euler=np.array([np.pi / 2, np.pi / 2, 0]),
     offset_position=np.array([0, 0, 0]),  # Gripper attachment offset
 )
 
@@ -78,52 +78,17 @@ RBY1_ACTUATORS = {
     "left_arm_6": True,
 }
 
-# Floating base configuration for wheeled robot
-# X, Y movement and rotation around Z (theta)
-# RBY1 wheels provide holonomic base movement
-STIFFNESS_XY = 0  # Free movement for wheeled base
-RBY1_FLOATING_BASE = FloatingBaseConfig(
-    dofs={
-        PelvisDof.X: Dof(
-            joint_type=JointType.SLIDE,
-            axis=(1, 0, 0),
-            stiffness=STIFFNESS_XY,
-        ),
-        PelvisDof.Y: Dof(
-            joint_type=JointType.SLIDE,
-            axis=(0, 1, 0),
-            stiffness=STIFFNESS_XY,
-        ),
-        PelvisDof.RZ: Dof(
-            joint_type=JointType.HINGE,
-            axis=(0, 0, 1),
-            stiffness=0,  # Free rotation
-        ),
-    },
-    delta_range_position=(-0.2, 0.2),  # Delta range for position control
-    delta_range_rotation=(-0.5, 0.5),  # Delta range for rotation control
-    animated_legs_class=None,  # No animated legs for wheeled robot
-    reset_state=np.array([
-        # Torso (6 DOF) - neutral position
-        0, 0, 0, 0, 0, 0,
-        # Right arm (7 DOF) - bent elbow, hand forward at comfortable height
-        0, 0, 0, -1.57, 0, 0.5, 0,
-        # Left arm (7 DOF) - bent elbow, hand forward at comfortable height
-        0, 0, 0, -1.57, 0, 0.5, 0,
-    ]),
-)
-
-# Full body configuration (for completeness, though we mainly use upper body)
+# Full body configuration
 RBY1_FULL_BODY = FullBodyConfig(
     offset_position=np.array([0, 0, 0]),  # Keep base at ground level for wheeled robot
     reset_state=np.array([
-        # No wheel actuators anymore - base controlled via mocap
-        # Torso (6 DOF) - neutral position
-        0, 0, 0, 0, 0, 0,
-        # Right arm (7 DOF) - bent elbow, hand forward at comfortable height
-        0, 0, 0, -1.57, 0, 0.5, 0,
-        # Left arm (7 DOF) - bent elbow, hand forward at comfortable height
-        0, 0, 0, -1.57, 0, 0.5, 0,
+        # Torso (6 DOF) - minimal movement for H1 pose match (position+orientation)
+        0.0296, 0.0177, 0.0000, -0.0177, -0.0296, -0.0000,
+        # Right arm (7 DOF) - matched to H1 pose (position+orientation) with scale=1.3
+        0.5381, 0.0500, 0.2096, -2.0186, 0.3451, -0.0468, -0.2460,
+        # 0.5100, -0.0967, 0.1544, -2.0225, -0.3253, 0.0430, 0.2704,
+        # Left arm (7 DOF) - matched to H1 pose (position+orientation) with scale=1.3
+        0.5100, 0.0967, -0.1544, -2.0225, 0.3253, -0.0430, -0.2704,
     ]),
 )
 
@@ -134,7 +99,7 @@ RBY1_CONFIG = RobotConfig(
     position_kp=300,
     pelvis_body="base",  # RBY1 base body
     full_body=RBY1_FULL_BODY,
-    floating_base=RBY1_FLOATING_BASE,
+    floating_base=None,  # RBY1 doesn't use floating base
     gripper=ROBOTIQ_2F85,  # Using H1 grippers for consistency
     arms={HandSide.LEFT: RBY1_LEFT_ARM, HandSide.RIGHT: RBY1_RIGHT_ARM},
     actuators=RBY1_ACTUATORS,
@@ -149,7 +114,7 @@ RBY1_FINE_MANIPULATION_CONFIG = RobotConfig(
     position_kp=300,
     pelvis_body="base",
     full_body=RBY1_FULL_BODY,
-    floating_base=RBY1_FLOATING_BASE,
+    floating_base=None,  # RBY1 doesn't use floating base
     gripper=ROBOTIQ_2F85_FINE_MANIPULATION,
     arms={HandSide.LEFT: RBY1_LEFT_ARM, HandSide.RIGHT: RBY1_RIGHT_ARM},
     actuators=RBY1_ACTUATORS,
@@ -163,6 +128,8 @@ class RBY1(Robot):
 
     def __init__(self, action_mode, mojo=None):
         """Initialize RBY1 robot with mocap base control."""
+        # Set desired scale before loading
+        self._model_scale = 1.3
         super().__init__(action_mode, mojo)
         
         # Fix limb_actuators for RBY1 with namespace
@@ -239,6 +206,72 @@ class RBY1(Robot):
         # Sort by expected order
         self._limb_actuators.sort(key=lambda a: expected_names.index(a.name) if a.name in expected_names else 999)
     
+    def _on_loaded(self, model):
+        """Override to apply scaling before model compilation."""
+        # Apply scaling to the MJCF model before it's compiled
+        if hasattr(self, '_model_scale') and self._model_scale != 1.0:
+            # Scale all body positions
+            for body in model.find_all('body'):
+                if body.pos is not None:
+                    body.pos = [p * self._model_scale for p in body.pos]
+            
+            # Scale all geom sizes (collision geometry)
+            for geom in model.find_all('geom'):
+                if geom.size is not None:
+                    geom.size = [s * self._model_scale for s in geom.size]
+                if hasattr(geom, 'fromto') and geom.fromto is not None:
+                    geom.fromto = [f * self._model_scale for f in geom.fromto]
+                # Also scale mesh if this geom uses one
+                if hasattr(geom, 'mesh') and geom.mesh is not None:
+                    # Geoms with meshes need their mesh scaled
+                    mesh_name = geom.mesh
+                    # Find the corresponding mesh asset and scale it
+                    for mesh in model.find_all('mesh'):
+                        if hasattr(mesh, 'name') and mesh.name == mesh_name:
+                            if mesh.scale is not None:
+                                mesh.scale = [s * self._model_scale for s in mesh.scale]
+                            else:
+                                mesh.scale = [self._model_scale] * 3
+            
+            # Scale all mesh assets directly 
+            for mesh in model.find_all('mesh'):
+                if mesh.scale is not None:
+                    mesh.scale = [s * self._model_scale for s in mesh.scale]
+                else:
+                    mesh.scale = [self._model_scale] * 3
+            
+            # Scale all site positions  
+            for site in model.find_all('site'):
+                if site.pos is not None:
+                    site.pos = [p * self._model_scale for p in site.pos]
+                if site.size is not None:
+                    site.size = [s * self._model_scale for s in site.size]
+            
+            # Scale joint ranges (for position limits)
+            for joint in model.find_all('joint'):
+                if joint.range is not None:
+                    # Only scale positional joints, not angular ones
+                    if hasattr(joint, 'type') and joint.type in ['slide', 'free']:
+                        joint.range = [r * self._model_scale for r in joint.range]
+                if joint.pos is not None:
+                    joint.pos = [p * self._model_scale for p in joint.pos]
+            
+            # Scale inertial properties (optional - MuJoCo often handles this)
+            for body in model.find_all('body'):
+                if hasattr(body, 'inertial') and body.inertial is not None:
+                    inertial = body.inertial
+                    if inertial.pos is not None:
+                        inertial.pos = [p * self._model_scale for p in inertial.pos]
+                    # Mass scales with volume (scale^3)
+                    if inertial.mass is not None:
+                        inertial.mass = inertial.mass * (self._model_scale ** 3)
+                    # Inertia scales with mass * length^2, so scale^5 total
+                    if inertial.diaginertia is not None:
+                        inertial.diaginertia = [i * (self._model_scale ** 5) for i in inertial.diaginertia]
+        
+        # Call parent's _on_loaded to continue normal initialization
+        super()._on_loaded(model)
+    
     @property
     def config(self) -> RobotConfig:
         """Get robot config."""
@@ -250,6 +283,8 @@ class RBY1FineManipulation(Robot):
 
     def __init__(self, action_mode, mojo=None):
         """Initialize RBY1 robot with mocap base control."""
+        # Set desired scale before loading
+        self._model_scale = 1.3 
         super().__init__(action_mode, mojo)
         
         # Fix limb_actuators for RBY1 with namespace
@@ -324,6 +359,72 @@ class RBY1FineManipulation(Robot):
         
         # Sort by expected order
         self._limb_actuators.sort(key=lambda a: expected_names.index(a.name) if a.name in expected_names else 999)
+    
+    def _on_loaded(self, model):
+        """Override to apply scaling before model compilation."""
+        # Apply scaling to the MJCF model before it's compiled
+        if hasattr(self, '_model_scale') and self._model_scale != 1.0:
+            # Scale all body positions
+            for body in model.find_all('body'):
+                if body.pos is not None:
+                    body.pos = [p * self._model_scale for p in body.pos]
+            
+            # Scale all geom sizes (collision geometry)
+            for geom in model.find_all('geom'):
+                if geom.size is not None:
+                    geom.size = [s * self._model_scale for s in geom.size]
+                if hasattr(geom, 'fromto') and geom.fromto is not None:
+                    geom.fromto = [f * self._model_scale for f in geom.fromto]
+                # Also scale mesh if this geom uses one
+                if hasattr(geom, 'mesh') and geom.mesh is not None:
+                    # Geoms with meshes need their mesh scaled
+                    mesh_name = geom.mesh
+                    # Find the corresponding mesh asset and scale it
+                    for mesh in model.find_all('mesh'):
+                        if hasattr(mesh, 'name') and mesh.name == mesh_name:
+                            if mesh.scale is not None:
+                                mesh.scale = [s * self._model_scale for s in mesh.scale]
+                            else:
+                                mesh.scale = [self._model_scale] * 3
+            
+            # Scale all mesh assets directly 
+            for mesh in model.find_all('mesh'):
+                if mesh.scale is not None:
+                    mesh.scale = [s * self._model_scale for s in mesh.scale]
+                else:
+                    mesh.scale = [self._model_scale] * 3
+            
+            # Scale all site positions  
+            for site in model.find_all('site'):
+                if site.pos is not None:
+                    site.pos = [p * self._model_scale for p in site.pos]
+                if site.size is not None:
+                    site.size = [s * self._model_scale for s in site.size]
+            
+            # Scale joint ranges (for position limits)
+            for joint in model.find_all('joint'):
+                if joint.range is not None:
+                    # Only scale positional joints, not angular ones
+                    if hasattr(joint, 'type') and joint.type in ['slide', 'free']:
+                        joint.range = [r * self._model_scale for r in joint.range]
+                if joint.pos is not None:
+                    joint.pos = [p * self._model_scale for p in joint.pos]
+            
+            # Scale inertial properties (optional - MuJoCo often handles this)
+            for body in model.find_all('body'):
+                if hasattr(body, 'inertial') and body.inertial is not None:
+                    inertial = body.inertial
+                    if inertial.pos is not None:
+                        inertial.pos = [p * self._model_scale for p in inertial.pos]
+                    # Mass scales with volume (scale^3)
+                    if inertial.mass is not None:
+                        inertial.mass = inertial.mass * (self._model_scale ** 3)
+                    # Inertia scales with mass * length^2, so scale^5 total
+                    if inertial.diaginertia is not None:
+                        inertial.diaginertia = [i * (self._model_scale ** 5) for i in inertial.diaginertia]
+        
+        # Call parent's _on_loaded to continue normal initialization
+        super()._on_loaded(model)
     
     @property
     def config(self) -> RobotConfig:
