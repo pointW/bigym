@@ -353,13 +353,13 @@ def main():
     parser.add_argument(
         "--env", 
         type=str, 
-        default="ReachTarget",
+        default="MovePlate",
         help="Environment name (e.g., ReachTarget, MovePlate, PickCube)"
     )
     parser.add_argument(
         "--max-demos", 
         type=int, 
-        default=10, 
+        default=60, 
         help="Maximum number of demos to convert"
     )
     parser.add_argument(
