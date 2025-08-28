@@ -81,15 +81,65 @@ RBY1_ACTUATORS = {
 # Full body configuration
 RBY1_FULL_BODY = FullBodyConfig(
     offset_position=np.array([0, 0, 0]),  # Keep base at ground level for wheeled robot
-    reset_state=np.array([
-        # Torso (6 DOF) - minimal movement for H1 pose match (position+orientation)
-        0.0296, 0.0177, 0.0000, -0.0177, -0.0296, -0.0000,
-        # Right arm (7 DOF) - matched to H1 pose (position+orientation) with scale=1.3
-        0.5381, 0.0500, 0.2096, -2.0186, 0.3451, -0.0468, -0.2460,
-        # 0.5100, -0.0967, 0.1544, -2.0225, -0.3253, 0.0430, 0.2704,
-        # Left arm (7 DOF) - matched to H1 pose (position+orientation) with scale=1.3
-        0.5100, 0.0967, -0.1544, -2.0225, 0.3253, -0.0430, -0.2704,
-    ]),
+    # reset_state=np.array([
+    #     # Torso (6 DOF) - minimal movement for H1 pose match (position+orientation)
+    #     0.0296, 0.0177, 0.0000, -0.0177, -0.0296, -0.0000,
+    #     # Right arm (7 DOF) - matched to H1 pose (position+orientation) with scale=1.3
+    #     0.5381, 0.0500, 0.2096, -2.0186, 0.3451, -0.0468, -0.2460,
+    #     # 0.5100, -0.0967, 0.1544, -2.0225, -0.3253, 0.0430, 0.2704,
+    #     # Left arm (7 DOF) - matched to H1 pose (position+orientation) with scale=1.3
+    #     0.5100, 0.0967, -0.1544, -2.0225, 0.3253, -0.0430, -0.2704,
+    # ]),
+#     reset_state=np.array([
+#     # Torso (6 DOF) - fixed at zero
+#     0.0000,
+#     0.0000,
+#     0.0000,
+#     0.0000,
+#     0.0000,
+#     0.0000,
+#     # Right arm (7 DOF)
+#     0.3392,
+#     0.0284,
+#     0.2281,
+#     -1.2886,
+#     0.3424,
+#     0.2172,
+#     -0.2441,
+#     # Left arm (7 DOF)
+#     0.3329,
+#     -0.0017,
+#     -0.2026,
+#     -1.2914,
+#     0.3109,
+#     0.2232,
+#     -0.2684
+# ])
+reset_state=np.array([
+    # Torso (6 DOF) - fixed at zero
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    0.0000,
+    # Right arm (7 DOF)
+    0.4768,
+    -0.0089,
+    0.1617,
+    -1.9939,
+    0.3179,
+    -0.0256,
+    -0.2916,
+    # Left arm (7 DOF)
+    0.4706,
+    0.0405,
+    -0.1765,
+    -1.9902,
+    0.2878,
+    -0.0346,
+    -0.2912
+])
 )
 
 # Main robot configuration
@@ -129,7 +179,7 @@ class RBY1(Robot):
     def __init__(self, action_mode, mojo=None):
         """Initialize RBY1 robot with mocap base control."""
         # Set desired scale before loading
-        self._model_scale = 1.3
+        self._model_scale = 1.0
         super().__init__(action_mode, mojo)
         
         # Fix limb_actuators for RBY1 with namespace
