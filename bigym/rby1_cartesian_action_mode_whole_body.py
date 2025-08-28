@@ -11,9 +11,12 @@ from gymnasium import spaces
 from pyquaternion import Quaternion
 import mujoco
 
-from bigym.action_modes import ActionMode
-from bigym.const import HandSide
+from bigym.action_modes import ActionMode, TargetStateNotReachedWarning
+from bigym.const import HandSide, TOLERANCE_ANGULAR
 from bigym.ik.rby1_whole_body_ik import RBY1WholeBodyIK
+from bigym.utils.physics_utils import (
+    is_target_reached,
+)
 from vr.ik.h1_upper_body_ik import Pose
 import warnings
 
@@ -237,66 +240,38 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         
         # Get current qpos for IK initialization
         current_qpos = self._mojo.physics.data.qpos.copy()
-        
-        # Check if this is a new action (targets changed significantly)
-        new_action = (
-            not hasattr(self, '_last_target_left_pos') or
-            not hasattr(self, '_last_target_right_pos') or
-            not np.allclose(self._last_target_left_pos, left_pos, atol=0.001) or
-            not np.allclose(self._last_target_right_pos, right_pos, atol=0.001)
-        )
-        
-        if new_action:
-            # New action, calculate static flags based on current positions
-            # These flags should remain constant for the duration of this action
-            left_ee_pos, right_ee_pos = self.get_current_ee_positions()
-            self._left_is_static = np.linalg.norm(left_pos - left_ee_pos) < 0.001
-            self._right_is_static = np.linalg.norm(right_pos - right_ee_pos) < 0.001
-            # Remember these targets to detect when action changes
-            self._last_target_left_pos = left_pos.copy()
-            self._last_target_right_pos = right_pos.copy()
-        
+                
         # Store target poses for convergence checking
         self._target_left_pos = left_pos
         self._target_left_quat = left_quat_np
         self._target_right_pos = right_pos
         self._target_right_quat = right_quat_np
-        
-        # Only solve IK if targets have changed significantly or we don't have a solution
-        should_solve_ik = (
-            self._last_ik_solution is None or
-            not self.block_until_reached  # Always solve if not blocking
+    
+        # Step 1: Solve whole-body IK for target poses
+        # The IK solver will optimize base position along with joint positions
+        # Don't use body-relative mode as it causes instability
+        ik_solution, success, info = self._ik_solver.solve(
+            left_target_pos=left_pos,
+            left_target_quat=left_quat_np,
+            right_target_pos=right_pos,
+            right_target_quat=right_quat_np,
+            left_body_relative=False,  # Always use world frame
+            right_body_relative=False,  # Always use world frame
+            current_qpos=current_qpos,
+            max_iterations=100,
+            tolerance=0.001,
         )
         
-        if should_solve_ik:
-            # Step 1: Solve whole-body IK for target poses
-            # The IK solver will optimize base position along with joint positions
-            # Don't use body-relative mode as it causes instability
-            ik_solution, success, info = self._ik_solver.solve(
-                left_target_pos=left_pos,
-                left_target_quat=left_quat_np,
-                right_target_pos=right_pos,
-                right_target_quat=right_quat_np,
-                left_body_relative=False,  # Always use world frame
-                right_body_relative=False,  # Always use world frame
-                current_qpos=current_qpos,
-                max_iterations=100,
-                tolerance=0.001,
-            )
-            
-            if not success:
-                # IK failed, keep current positions but still control grippers
-                for side, action in zip(self._robot.grippers, gripper_action):
-                    self._robot.grippers[side].set_control(action)
-                self._mojo.step()
-                self._last_ik_info = info  # Store even on failure
-                return
-            
-            self._last_ik_solution = ik_solution
-            self._last_ik_info = info  # Store IK solver info
-        else:
-            # Use cached IK solution
-            ik_solution = self._last_ik_solution
+        if not success:
+            # IK failed, keep current positions but still control grippers
+            for side, action in zip(self._robot.grippers, gripper_action):
+                self._robot.grippers[side].set_control(action)
+            self._mojo.step()
+            self._last_ik_info = info  # Store even on failure
+            return
+        
+        self._last_ik_solution = ik_solution
+        self._last_ik_info = info  # Store IK solver info
         
         # Step 2: Extract base position from IK solution and move base_target mocap
         # IK solution qpos structure: [base_x, base_y, base_z, quat_w, quat_x, quat_y, quat_z, ...]
@@ -529,62 +504,86 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         
         return np.array(action_parts, dtype=np.float32)
     
+    # def _step_until_reached(self):
+    #     """Step physics until target poses are reached or max steps exceeded."""
+    #     steps_counter = 0
+    #     while steps_counter < self.MAX_STEPS:
+    #         self._mojo.step()
+    #         steps_counter += 1
+            
+    #         if self._is_target_reached():
+    #             break
+                
+    #     if steps_counter >= self.MAX_STEPS and not self._is_target_reached():
+    #         warnings.warn(
+    #             f"Failed to reach target poses in {self.MAX_STEPS} steps!",
+    #             UserWarning,
+    #         )
+    #     print(steps_counter)
+    
+    # def _is_target_reached(self) -> bool:
+    #     """Check if end-effectors have reached target poses."""
+    #     if not hasattr(self, '_target_left_pos'):
+    #         return True  # No targets set yet
+            
+    #     # Get current end-effector poses
+    #     left_pose, right_pose = self.get_current_ee_poses()
+        
+    #     # Check left end-effector position
+    #     left_pos_error = np.linalg.norm(left_pose.position - self._target_left_pos)
+    #     if left_pos_error > self.POSITION_TOLERANCE:
+    #         return False
+            
+    #     # Check right end-effector position
+    #     right_pos_error = np.linalg.norm(right_pose.position - self._target_right_pos)
+    #     if right_pos_error > self.POSITION_TOLERANCE:
+    #         return False
+            
+    #     # Check left end-effector orientation
+    #     left_quat_current = np.array([
+    #         left_pose.orientation.w,
+    #         left_pose.orientation.x, 
+    #         left_pose.orientation.y,
+    #         left_pose.orientation.z
+    #     ])
+    #     left_quat_diff = Quaternion(self._target_left_quat) * Quaternion(left_quat_current).inverse
+    #     left_angle_error = 2 * np.arccos(np.clip(abs(left_quat_diff.w), -1, 1))
+    #     if left_angle_error > self.ORIENTATION_TOLERANCE:
+    #         return False
+            
+    #     # Check right end-effector orientation
+    #     right_quat_current = np.array([
+    #         right_pose.orientation.w,
+    #         right_pose.orientation.x,
+    #         right_pose.orientation.y,
+    #         right_pose.orientation.z
+    #     ])
+    #     right_quat_diff = Quaternion(self._target_right_quat) * Quaternion(right_quat_current).inverse
+    #     right_angle_error = 2 * np.arccos(np.clip(abs(right_quat_diff.w), -1, 1))
+    #     if right_angle_error > self.ORIENTATION_TOLERANCE:
+    #         return False
+            
+    #     return True
+
     def _step_until_reached(self):
-        """Step physics until target poses are reached or max steps exceeded."""
+        """Step physics until the target position is reached."""
         steps_counter = 0
-        while steps_counter < self.MAX_STEPS:
+        while True:
             self._mojo.step()
             steps_counter += 1
-            
-            if self._is_target_reached():
+            if self._is_target_state_reached() or steps_counter >= self.MAX_STEPS:
+                if steps_counter >= self.MAX_STEPS:
+                    warnings.warn(
+                        f"Failed to reach target state in " f"{self.MAX_STEPS} steps!",
+                        TargetStateNotReachedWarning,
+                    )
                 break
-                
-        if steps_counter >= self.MAX_STEPS and not self._is_target_reached():
-            warnings.warn(
-                f"Failed to reach target poses in {self.MAX_STEPS} steps!",
-                UserWarning,
-            )
-    
-    def _is_target_reached(self) -> bool:
-        """Check if end-effectors have reached target poses."""
-        if not hasattr(self, '_target_left_pos'):
-            return True  # No targets set yet
-            
-        # Get current end-effector poses
-        left_pose, right_pose = self.get_current_ee_poses()
-        
-        # Check left end-effector position
-        left_pos_error = np.linalg.norm(left_pose.position - self._target_left_pos)
-        if left_pos_error > self.POSITION_TOLERANCE:
-            return False
-            
-        # Check right end-effector position
-        right_pos_error = np.linalg.norm(right_pose.position - self._target_right_pos)
-        if right_pos_error > self.POSITION_TOLERANCE:
-            return False
-            
-        # Check left end-effector orientation
-        left_quat_current = np.array([
-            left_pose.orientation.w,
-            left_pose.orientation.x, 
-            left_pose.orientation.y,
-            left_pose.orientation.z
-        ])
-        left_quat_diff = Quaternion(self._target_left_quat) * Quaternion(left_quat_current).inverse
-        left_angle_error = 2 * np.arccos(np.clip(abs(left_quat_diff.w), -1, 1))
-        if left_angle_error > self.ORIENTATION_TOLERANCE:
-            return False
-            
-        # Check right end-effector orientation
-        right_quat_current = np.array([
-            right_pose.orientation.w,
-            right_pose.orientation.x,
-            right_pose.orientation.y,
-            right_pose.orientation.z
-        ])
-        right_quat_diff = Quaternion(self._target_right_quat) * Quaternion(right_quat_current).inverse
-        right_angle_error = 2 * np.arccos(np.clip(abs(right_quat_diff.w), -1, 1))
-        if right_angle_error > self.ORIENTATION_TOLERANCE:
-            return False
-            
+
+    def _is_target_state_reached(self):
+        if self.floating_base:
+            if not self._robot.floating_base.is_target_reached:
+                return False
+        for actuator in self._robot.limb_actuators:
+            if not is_target_reached(actuator, self._mojo.physics, TOLERANCE_ANGULAR):
+                return False
         return True
