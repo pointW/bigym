@@ -271,14 +271,14 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         if should_solve_ik:
             # Step 1: Solve whole-body IK for target poses
             # The IK solver will optimize base position along with joint positions
-            # Use body-relative constraints for non-reaching hands
+            # Don't use body-relative mode as it causes instability
             ik_solution, success, info = self._ik_solver.solve(
                 left_target_pos=left_pos,
                 left_target_quat=left_quat_np,
                 right_target_pos=right_pos,
                 right_target_quat=right_quat_np,
-                left_body_relative=self._left_is_static,  # Keep static hand in body frame
-                right_body_relative=self._right_is_static,  # Keep static hand in body frame
+                left_body_relative=False,  # Always use world frame
+                right_body_relative=False,  # Always use world frame
                 current_qpos=current_qpos,
                 max_iterations=100,
                 tolerance=0.001,
@@ -335,9 +335,11 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         actuated_start = 11  # After base(3) + quat(4) + wheels(4)
         
         # Extract torso and arm joints from IK solution
-        torso_joints = ik_solution[actuated_start:actuated_start+6]
-        right_arm_joints = ik_solution[actuated_start+6:actuated_start+13]
-        left_arm_joints = ik_solution[actuated_start+13:actuated_start+20]
+        # Note: qpos structure for RBY1 is:
+        # [0:7] base, [7:11] wheels, [11:17] torso, [17:24] right arm, [24:32] right gripper, [32:39] left arm
+        torso_joints = ik_solution[11:17]  # Torso at indices 11-16
+        right_arm_joints = ik_solution[17:24]  # Right arm at indices 17-23
+        left_arm_joints = ik_solution[32:39]  # Left arm at indices 32-38 (NOT 24-30!)
         
         # Apply joint positions
         joint_positions = np.concatenate([torso_joints, right_arm_joints, left_arm_joints])
@@ -360,8 +362,12 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
             data.qpos[7:11] = ik_solution[7:11]
             
             # Directly set joint positions in qpos
-            # The torso and arm joints start at index 11 in qpos
-            data.qpos[actuated_start:actuated_start+20] = joint_positions
+            # Set torso joints: qpos[11:17]
+            data.qpos[11:17] = torso_joints
+            # Set right arm joints: qpos[17:24]
+            data.qpos[17:24] = right_arm_joints
+            # Set left arm joints: qpos[32:39]
+            data.qpos[32:39] = left_arm_joints
             
             # ALSO set ctrl to prevent motor drift
             # (motors will try to drive joints back to ctrl if we don't update it)
