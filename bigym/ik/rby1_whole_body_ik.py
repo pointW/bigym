@@ -297,12 +297,16 @@ class RBY1WholeBodyIK:
                 break  # One task is sufficient for all wheels due to implementation
         
         # 6. General posture task for redundancy resolution and stability
-        # Moderate cost to balance between stability and reaching ability
+        # Moderate cost to balance tracking and stability
         posture_task = mink.PostureTask(
             model=self.model,
-            cost=10.0  # Moderate cost - allows movement but prevents large jumps
+            cost=50.0  # Balance between tracking accuracy and stability
         )
-        posture_task.set_target(current_qpos)
+        # Set reference posture with torso at zero
+        reference_qpos = current_qpos.copy()
+        # Keep torso joints (indices 11-16) at zero
+        reference_qpos[11:17] = 0.0
+        posture_task.set_target(reference_qpos)
         tasks.append(posture_task)
         
         # Solver parameters
