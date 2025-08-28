@@ -35,3 +35,6 @@ cartesian_demos_move_plate/
 cartesian_demos_target_move_plate/
 .claude/debug_archive/
 tmp/
+rby1/
+rby1_cartesian_demos_reachtarget/
+rby1_cartesian_demos_moveplate/
