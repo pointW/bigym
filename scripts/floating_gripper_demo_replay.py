@@ -7,22 +7,122 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 from pathlib import Path
+import importlib
+from typing import Type
 
-from bigym.envs.reach_target import ReachTarget
-from bigym.envs.move_plates import MovePlate
 from bigym.floating_gripper_action_mode import FloatingGripperActionMode
 from demonstrations.demo import Demo
 from bigym.robots.configs.floating_grippers import FloatingGrippers
 from bigym.const import HandSide
 
 
-def replay_floating_gripper_demo(env_name: str = "ReachTarget", demo_dir: str = None, headless: bool = False):
+def get_environment_class(env_name: str) -> Type:
+    """Dynamically import and return the environment class.
+    
+    Args:
+        env_name: Name of the environment (e.g., 'ReachTarget', 'MovePlate')
+        
+    Returns:
+        Environment class
+    """
+    # Map of environment names to their module paths - based on available demos
+    env_modules = {
+        # Core environments
+        'ReachTarget': 'bigym.envs.reach_target',
+        'ReachTargetSingle': 'bigym.envs.reach_target',
+        'ReachTargetDual': 'bigym.envs.reach_target',
+        'MovePlate': 'bigym.envs.move_plates',
+        'MovePlates': 'bigym.envs.move_plates',  # Alias
+        'MoveTwoPlates': 'bigym.envs.move_plates',
+        
+        # Dishwasher tasks
+        'DishwasherOpen': 'bigym.envs.dishwasher',
+        'DishwasherClose': 'bigym.envs.dishwasher',
+        'DishwasherOpenTrays': 'bigym.envs.dishwasher',
+        'DishwasherCloseTrays': 'bigym.envs.dishwasher',
+        'DishwasherLoadCups': 'bigym.envs.dishwasher',
+        'DishwasherLoadCutlery': 'bigym.envs.dishwasher',
+        'DishwasherLoadPlates': 'bigym.envs.dishwasher',
+        'DishwasherUnloadCups': 'bigym.envs.dishwasher',
+        'DishwasherUnloadCupsLong': 'bigym.envs.dishwasher',
+        'DishwasherUnloadCutlery': 'bigym.envs.dishwasher',
+        'DishwasherUnloadCutleryLong': 'bigym.envs.dishwasher',
+        'DishwasherUnloadPlates': 'bigym.envs.dishwasher',
+        'DishwasherUnloadPlatesLong': 'bigym.envs.dishwasher',
+        
+        # Manipulation tasks
+        'FlipCup': 'bigym.envs.manipulation',
+        'FlipCutlery': 'bigym.envs.manipulation',
+        'FlipSandwich': 'bigym.envs.manipulation',
+        'StackBlocks': 'bigym.envs.manipulation',
+        
+        # Kitchen tasks
+        'ToastSandwich': 'bigym.envs.kitchen',
+        'RemoveSandwich': 'bigym.envs.kitchen',
+        'SaucepanToHob': 'bigym.envs.kitchen',
+        
+        # Storage tasks
+        'StoreBox': 'bigym.envs.storage',
+        'PickBox': 'bigym.envs.storage',
+        'StoreKitchenware': 'bigym.envs.storage',
+        'GroceriesStoreLower': 'bigym.envs.storage',
+        'GroceriesStoreUpper': 'bigym.envs.storage',
+        'TakeCups': 'bigym.envs.storage',
+        'PutCups': 'bigym.envs.storage',
+        
+        # Cupboard/Drawer tasks
+        'CupboardsOpenAll': 'bigym.envs.cupboards',
+        'CupboardsCloseAll': 'bigym.envs.cupboards',
+        'WallCupboardOpen': 'bigym.envs.cupboards',
+        'WallCupboardClose': 'bigym.envs.cupboards',
+        'DrawersAllOpen': 'bigym.envs.drawers',
+        'DrawersAllClose': 'bigym.envs.drawers',
+        'DrawerTopOpen': 'bigym.envs.drawers',
+        'DrawerTopClose': 'bigym.envs.drawers',
+    }
+    
+    # Handle special cases and determine actual class name
+    if env_name == 'MovePlates':
+        class_name = 'MovePlate'
+    elif env_name == 'MoveTwoPlates':
+        class_name = 'MovePlate'  # Might be same class with different config
+    elif env_name.startswith('ReachTarget'):
+        class_name = 'ReachTarget'  # All reach variants use same class
+    else:
+        class_name = env_name
+    
+    if env_name not in env_modules:
+        # Try to import from bigym.envs directly
+        module_name = f"bigym.envs.{env_name.lower()}"
+        try:
+            module = importlib.import_module(module_name)
+            return getattr(module, env_name)
+        except (ImportError, AttributeError):
+            # Try without underscores
+            module_name = f"bigym.envs.{env_name.replace('_', '').lower()}"
+            try:
+                module = importlib.import_module(module_name)
+                return getattr(module, env_name)
+            except (ImportError, AttributeError):
+                raise ValueError(f"Unknown environment: {env_name}")
+    
+    module = importlib.import_module(env_modules[env_name])
+    return getattr(module, class_name)
+
+
+def replay_floating_gripper_demo(
+    env_name: str = "ReachTarget", 
+    demo_dir: str = None, 
+    headless: bool = False,
+    control_frequency: int = 20
+):
     """Replay floating gripper demo step by step.
     
     Args:
-        env_name: Environment name ("ReachTarget" or "MovePlate")
+        env_name: Environment name (e.g., 'ReachTarget', 'MovePlate', 'FlipCup', etc.)
         demo_dir: Directory containing cartesian demos
         headless: If True, run without GUI. If False, show visualization.
+        control_frequency: Control frequency for the environment (default: 20 Hz)
     """
     
     # Set default demo directory based on environment - use RBY1 demos
@@ -36,24 +136,31 @@ def replay_floating_gripper_demo(env_name: str = "ReachTarget", demo_dir: str = 
     if not demo_files:
         print(f"No demos found in {demo_dir}!")
         print("Please run conversion script first:")
-        print(f"  python scripts/convert_demos_to_cartesian.py --env {env_name}")
+        print(f"  python scripts/convert_h1_to_rby1_cartesian.py --env {env_name}")
         return
     
     demo = Demo.from_safetensors(demo_files[0])
     print(f"Loaded demo with seed {demo.seed}, {len(demo.timesteps)} timesteps")
     
-    # Select environment class
-    if env_name == "ReachTarget":
-        env_cls = ReachTarget
-    elif env_name == "MovePlate":
-        env_cls = MovePlate
-    else:
-        raise ValueError(f"Unknown environment: {env_name}")
+    # Get environment class dynamically
+    try:
+        env_cls = get_environment_class(env_name)
+    except ValueError as e:
+        print(f"Error: {e}")
+        print("Available environments include:")
+        print("  Core: ReachTarget, MovePlate")
+        print("  Manipulation: FlipCup, FlipCutlery, FlipSandwich, StackBlocks")
+        print("  Dishwasher: DishwasherOpen, DishwasherClose, DishwasherLoadCups, etc.")
+        print("  Kitchen: ToastSandwich, RemoveSandwich, SaucepanToHob")
+        print("  Storage: StoreBox, PickBox, TakeCups, PutCups, etc.")
+        print("  Cupboards: CupboardsOpenAll, WallCupboardOpen, etc.")
+        print("  Drawers: DrawersAllOpen, DrawerTopOpen, etc.")
+        return
     
     # Create floating gripper environment
     env = env_cls(
-        action_mode=FloatingGripperActionMode(),
-        control_frequency=50,
+        action_mode=FloatingGripperActionMode(control_frequency=control_frequency),
+        control_frequency=control_frequency,
         render_mode=None if headless else "human",
         robot_cls=FloatingGrippers
     )
@@ -161,11 +268,24 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description="Replay floating gripper demos")
-    parser.add_argument("--env", default="MovePlate", 
-                        choices=["ReachTarget", "MovePlate"],
-                        help="Environment to use")
+    parser.add_argument(
+        "--env", 
+        default="MovePlate",
+        help="Environment to use (e.g., ReachTarget, MovePlate, FlipCup, DishwasherOpen, etc.)"
+    )
     parser.add_argument("--demo-dir", help="Directory containing demos")
     parser.add_argument("--headless", action="store_true", help="Run without GUI")
+    parser.add_argument(
+        "--control-freq",
+        type=int,
+        default=50,
+        help="Control frequency in Hz (default: 20)"
+    )
     args = parser.parse_args()
     
-    replay_floating_gripper_demo(args.env, args.demo_dir, args.headless)
+    replay_floating_gripper_demo(
+        env_name=args.env, 
+        demo_dir=args.demo_dir, 
+        headless=args.headless,
+        control_frequency=args.control_freq
+    )

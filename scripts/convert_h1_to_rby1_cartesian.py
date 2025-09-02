@@ -24,6 +24,36 @@ from demonstrations.utils import Metadata
 from demonstrations.demo import Demo, DemoStep
 from bigym.robots.configs.h1 import H1
 from bigym.robots.configs.rby1 import RBY1
+from bigym.action_modes import PelvisDof
+
+
+def detect_floating_dofs_from_demos(env_name: str) -> List[PelvisDof]:
+    """Detect the correct floating DOFs for an environment based on available demos.
+    
+    Args:
+        env_name: Name of the environment
+        
+    Returns:
+        List of PelvisDof enums for the floating base
+    """
+    # Environments that typically use 4 DOF (X, Y, Z, RZ) based on demo analysis
+    four_dof_envs = {
+        'FlipCup', 'FlipCutlery', 'FlipSandwich',  # Manipulation tasks need vertical movement
+        'StackBlocks',  # Stacking needs vertical control
+        'ToastSandwich', 'RemoveSandwich',  # Kitchen tasks with vertical elements
+        'SaucepanToHob',  # Lifting saucepan
+        'StoreBox', 'PickBox',  # Box manipulation
+        'StoreKitchenware',  # Storing items at different heights
+        'GroceriesStoreLower', 'GroceriesStoreUpper',  # Different height storage
+        'TakeCups', 'PutCups',  # Cup manipulation
+    }
+    
+    # Default to 3 DOF (X, Y, RZ) for most tasks
+    # This includes ReachTarget, MovePlate, Dishwasher tasks, etc.
+    if env_name in four_dof_envs:
+        return [PelvisDof.X, PelvisDof.Y, PelvisDof.Z, PelvisDof.RZ]
+    else:
+        return [PelvisDof.X, PelvisDof.Y, PelvisDof.RZ]
 
 
 def get_environment_class(env_name: str) -> Type:
@@ -35,18 +65,71 @@ def get_environment_class(env_name: str) -> Type:
     Returns:
         Environment class
     """
-    # Map of environment names to their module paths
+    # Map of environment names to their module paths - based on available demos
     env_modules = {
+        # Core environments
         'ReachTarget': 'bigym.envs.reach_target',
+        'ReachTargetSingle': 'bigym.envs.reach_target',
+        'ReachTargetDual': 'bigym.envs.reach_target',
         'MovePlate': 'bigym.envs.move_plates',
         'MovePlates': 'bigym.envs.move_plates',  # Alias
-        'PickCube': 'bigym.envs.pick_cube',
-        'StackBlocks': 'bigym.envs.stack_blocks',
-        # Add more environments here as needed
+        'MoveTwoPlates': 'bigym.envs.move_plates',
+        
+        # Dishwasher tasks
+        'DishwasherOpen': 'bigym.envs.dishwasher',
+        'DishwasherClose': 'bigym.envs.dishwasher',
+        'DishwasherOpenTrays': 'bigym.envs.dishwasher',
+        'DishwasherCloseTrays': 'bigym.envs.dishwasher',
+        'DishwasherLoadCups': 'bigym.envs.dishwasher',
+        'DishwasherLoadCutlery': 'bigym.envs.dishwasher',
+        'DishwasherLoadPlates': 'bigym.envs.dishwasher',
+        'DishwasherUnloadCups': 'bigym.envs.dishwasher',
+        'DishwasherUnloadCupsLong': 'bigym.envs.dishwasher',
+        'DishwasherUnloadCutlery': 'bigym.envs.dishwasher',
+        'DishwasherUnloadCutleryLong': 'bigym.envs.dishwasher',
+        'DishwasherUnloadPlates': 'bigym.envs.dishwasher',
+        'DishwasherUnloadPlatesLong': 'bigym.envs.dishwasher',
+        
+        # Manipulation tasks
+        'FlipCup': 'bigym.envs.manipulation',
+        'FlipCutlery': 'bigym.envs.manipulation',
+        'FlipSandwich': 'bigym.envs.manipulation',
+        'StackBlocks': 'bigym.envs.manipulation',
+        
+        # Kitchen tasks
+        'ToastSandwich': 'bigym.envs.kitchen',
+        'RemoveSandwich': 'bigym.envs.kitchen',
+        'SaucepanToHob': 'bigym.envs.kitchen',
+        
+        # Storage tasks
+        'StoreBox': 'bigym.envs.storage',
+        'PickBox': 'bigym.envs.storage',
+        'StoreKitchenware': 'bigym.envs.storage',
+        'GroceriesStoreLower': 'bigym.envs.storage',
+        'GroceriesStoreUpper': 'bigym.envs.storage',
+        'TakeCups': 'bigym.envs.storage',
+        'PutCups': 'bigym.envs.storage',
+        
+        # Cupboard/Drawer tasks
+        'CupboardsOpenAll': 'bigym.envs.cupboards',
+        'CupboardsCloseAll': 'bigym.envs.cupboards',
+        'WallCupboardOpen': 'bigym.envs.cupboards',
+        'WallCupboardClose': 'bigym.envs.cupboards',
+        'DrawersAllOpen': 'bigym.envs.drawers',
+        'DrawersAllClose': 'bigym.envs.drawers',
+        'DrawerTopOpen': 'bigym.envs.drawers',
+        'DrawerTopClose': 'bigym.envs.drawers',
     }
     
-    # Handle MovePlates -> MovePlate mapping
-    class_name = 'MovePlate' if env_name == 'MovePlates' else env_name
+    # Handle special cases and determine actual class name
+    if env_name == 'MovePlates':
+        class_name = 'MovePlate'
+    elif env_name == 'MoveTwoPlates':
+        class_name = 'MovePlate'  # Might be same class with different config
+    elif env_name.startswith('ReachTarget'):
+        class_name = 'ReachTarget'  # All reach variants use same class
+    else:
+        class_name = env_name
     
     if env_name not in env_modules:
         # Try to import from bigym.envs directly
@@ -55,48 +138,16 @@ def get_environment_class(env_name: str) -> Type:
             module = importlib.import_module(module_name)
             return getattr(module, env_name)
         except (ImportError, AttributeError):
-            raise ValueError(f"Unknown environment: {env_name}")
+            # Try without underscores
+            module_name = f"bigym.envs.{env_name.replace('_', '').lower()}"
+            try:
+                module = importlib.import_module(module_name)
+                return getattr(module, env_name)
+            except (ImportError, AttributeError):
+                raise ValueError(f"Unknown environment: {env_name}")
     
     module = importlib.import_module(env_modules[env_name])
     return getattr(module, class_name)
-
-
-def get_default_camera_config(env_name: str) -> List[CameraConfig]:
-    """Get default camera configuration for an environment.
-    
-    Args:
-        env_name: Name of the environment
-        
-    Returns:
-        List of camera configurations
-    """
-    # Default configurations for known environments
-    configs = {
-        'ReachTarget': [
-            CameraConfig(name="head", rgb=True, depth=False, resolution=(128, 128))
-        ],
-        'MovePlate': [
-            CameraConfig("head", resolution=(84, 84)),
-            CameraConfig("left_wrist", resolution=(84, 84)),
-            CameraConfig("right_wrist", resolution=(84, 84)),
-        ],
-        'MovePlates': [
-            CameraConfig("head", resolution=(84, 84)),
-            CameraConfig("left_wrist", resolution=(84, 84)),
-            CameraConfig("right_wrist", resolution=(84, 84)),
-        ],
-        'PickCube': [
-            CameraConfig(name="head", rgb=True, depth=False, resolution=(128, 128))
-        ],
-        'StackBlocks': [
-            CameraConfig(name="head", rgb=True, depth=False, resolution=(128, 128))
-        ],
-    }
-    
-    # Return the config if known, otherwise a minimal default
-    return configs.get(env_name, [
-        CameraConfig(name="head", rgb=True, depth=False, resolution=(128, 128))
-    ])
 
 
 def poses_to_rby1_cartesian_action(
@@ -134,6 +185,7 @@ def poses_to_rby1_cartesian_action(
 def convert_h1_demo_to_rby1_cartesian(
     original_demo: Demo,
     env_class: Type,
+    env_name: str,
     camera_configs: List[CameraConfig],
     control_frequency: int = 50,
     render_mode: Optional[str] = None,
@@ -144,6 +196,7 @@ def convert_h1_demo_to_rby1_cartesian(
     Args:
         original_demo: Original H1 demo with joint actions
         env_class: Environment class to use
+        env_name: Name of the environment for DOF detection
         camera_configs: Camera configurations for the environment
         control_frequency: Control frequency for the environment
         render_mode: Render mode (None for headless)
@@ -158,11 +211,19 @@ def convert_h1_demo_to_rby1_cartesian(
     
     cartesian_actions = []
     
+    # Detect the correct floating DOFs for this environment
+    floating_dofs = detect_floating_dofs_from_demos(env_name)
+    dof_str = "4 DOF (X,Y,Z,RZ)" if len(floating_dofs) == 4 else "3 DOF (X,Y,RZ)"
     print(f"Converting H1 demo with {len(joint_actions)} steps to RBY1 Cartesian format...")
+    print(f"Using {dof_str} floating base for {env_name}")
     
-    # Create H1 environment for replaying the demo
+    # Create H1 environment for replaying the demo with appropriate floating DOFs
     h1_env = env_class(
-        action_mode=JointPositionActionMode(floating_base=True, absolute=True),
+        action_mode=JointPositionActionMode(
+            floating_base=True, 
+            absolute=True,
+            floating_dofs=floating_dofs
+        ),
         control_frequency=control_frequency,
         observation_config=ObservationConfig(cameras=camera_configs),
         render_mode=render_mode,
@@ -274,7 +335,11 @@ def convert_h1_demos_batch(
     
     # Use default camera config if not provided
     if camera_configs is None:
-        camera_configs = get_default_camera_config(env_name)
+        camera_configs = [
+            CameraConfig("head", resolution=(84, 84)),
+            CameraConfig("left_wrist", resolution=(84, 84)),
+            CameraConfig("right_wrist", resolution=(84, 84)),
+        ]
     
     # Auto-generate output directory name if not provided
     if output_dir is None:
@@ -283,9 +348,18 @@ def convert_h1_demos_batch(
     print(f"Converting {demo_amount} H1 {env_name} demonstrations to RBY1 Cartesian format...")
     print(f"Output directory: {output_dir}")
     
-    # Create H1 environment to load demos
+    # Detect the correct floating DOFs for this environment
+    floating_dofs = detect_floating_dofs_from_demos(env_name)
+    dof_str = "4 DOF (X,Y,Z,RZ)" if len(floating_dofs) == 4 else "3 DOF (X,Y,RZ)"
+    print(f"Detected floating base configuration: {dof_str}")
+    
+    # Create H1 environment to load demos with appropriate floating DOFs
     h1_env = env_class(
-        action_mode=JointPositionActionMode(floating_base=True, absolute=True),
+        action_mode=JointPositionActionMode(
+            floating_base=True, 
+            absolute=True,
+            floating_dofs=floating_dofs
+        ),
         control_frequency=control_frequency,
         observation_config=ObservationConfig(cameras=camera_configs),
         render_mode=render_mode,
@@ -316,6 +390,7 @@ def convert_h1_demos_batch(
             rby1_demo = convert_h1_demo_to_rby1_cartesian(
                 original_demo,
                 env_class,
+                env_name,
                 camera_configs,
                 control_frequency,
                 render_mode,
