@@ -195,8 +195,8 @@ class FloatingGrippers(Robot):
         
         # Create relpose string: "x y z qw qx qy qz"
         # The offset means: gripper_base = mocap * offset
-        left_relpose = f"0 0 0 {offset_quat[3]} {offset_quat[0]} {offset_quat[1]} {offset_quat[2]}"
-        right_relpose = f"0 0 0 {offset_quat[3]} {offset_quat[0]} {offset_quat[1]} {offset_quat[2]}"
+        left_relpose = f"0.007 0 0 {offset_quat[3]} {offset_quat[0]} {offset_quat[1]} {offset_quat[2]}"
+        right_relpose = f"0.007 0 0 {offset_quat[3]} {offset_quat[0]} {offset_quat[1]} {offset_quat[2]}"
         
         self._mojo.root_element.mjcf.equality.add(
             'weld',
@@ -204,8 +204,8 @@ class FloatingGrippers(Robot):
             body1='left_gripper_mocap',
             body2='robotiq_2f85_left/base_mount',  # Attachment point
             relpose=left_relpose,  # Include rotation offset
-            solimp=[0.9999, 0.9999, 0.0001],  # CFM, damping, impedance (all very stiff)
-            solref=[0.0001, 1]  # Time constant and damping ratio
+            solref=[0.001, 1],
+            solimp=[0.99, 0.999, 0.001, 0.5, 2]
         )
         
         self._mojo.root_element.mjcf.equality.add(
@@ -214,8 +214,8 @@ class FloatingGrippers(Robot):
             body1='right_gripper_mocap',
             body2='robotiq_2f85_right/base_mount',  # Attachment point
             relpose=right_relpose,  # Include rotation offset
-            solimp=[0.9999, 0.9999, 0.0001],  # CFM, damping, impedance (all very stiff)
-            solref=[0.0001, 1]  # Time constant and damping ratio
+            solref=[0.001, 1],
+            solimp=[0.99, 0.999, 0.001, 0.5, 2]
         )
         
         # Force final physics recompilation
