@@ -53,7 +53,7 @@ class FloatingGripperActionMode(ActionMode):
     - Gripper control (2D): [-1, 1] for each gripper
     """
     
-    def __init__(self):
+    def __init__(self, control_frequency=50):
         """Initialize floating gripper action mode."""
         super().__init__(floating_base=False)
         self._left_mocap_idx = None
@@ -62,6 +62,8 @@ class FloatingGripperActionMode(ActionMode):
         self._robot = None
         self._initialized = False
         self.absolute = True  # This is an absolute action mode
+        self.control_frequency = control_frequency
+        self.low_level_frequency = 500
     
     def action_space(self, action_scale: float, seed: Optional[int] = None) -> spaces.Box:
         """Return the action space.
@@ -165,7 +167,8 @@ class FloatingGripperActionMode(ActionMode):
     def apply(self, action: np.ndarray):
         """Apply action by directly setting mocap body poses.
         
-        This achieves perfect tracking with zero error.
+        This achieves perfect tracking with zero error using linear interpolation
+        for smooth motion between control steps.
         
         Args:
             action: 20D action vector
@@ -185,37 +188,55 @@ class FloatingGripperActionMode(ActionMode):
         right_ori_6d = action[12:18]
         gripper_control = action[18:20]
         
-        # Convert 6D rotation to quaternion
+        # Convert 6D rotation to quaternion for target
         left_rot_matrix = rotation_6d_to_matrix(left_ori_6d)
         right_rot_matrix = rotation_6d_to_matrix(right_ori_6d)
         
-        left_quat = Quaternion(matrix=left_rot_matrix)
-        right_quat = Quaternion(matrix=right_rot_matrix)
+        left_quat_target = Quaternion(matrix=left_rot_matrix)
+        right_quat_target = Quaternion(matrix=right_rot_matrix)
         
-        # Set mocap body poses directly (perfect tracking)
         physics = self._mojo.physics
         
-        # Set left gripper mocap
-        physics.data.mocap_pos[self._left_mocap_idx] = left_pos
-        physics.data.mocap_quat[self._left_mocap_idx] = [
-            left_quat.w, left_quat.x, left_quat.y, left_quat.z
-        ]
+        # Get current mocap poses for interpolation
+        left_pos_current = physics.data.mocap_pos[self._left_mocap_idx].copy()
+        left_quat_current = Quaternion(physics.data.mocap_quat[self._left_mocap_idx])
         
-        # Set right gripper mocap
-        physics.data.mocap_pos[self._right_mocap_idx] = right_pos
-        physics.data.mocap_quat[self._right_mocap_idx] = [
-            right_quat.w, right_quat.x, right_quat.y, right_quat.z
-        ]
+        right_pos_current = physics.data.mocap_pos[self._right_mocap_idx].copy()
+        right_quat_current = Quaternion(physics.data.mocap_quat[self._right_mocap_idx])
         
-        # Control grippers (if robot has grippers)
+        # Control grippers (set once at the beginning)
         if hasattr(self._robot, 'grippers') and self._robot.grippers:
             for side, ctrl in zip(self._robot.grippers, gripper_control):
                 self._robot.grippers[side].set_control(ctrl)
         
-        # Step physics multiple times to let constraints converge
-        # This is important for weld constraints to properly track mocap bodies
-        # Need many steps for strong constraint enforcement with dynamic bodies
-        for _ in range(100):
+        # Linear interpolation over multiple physics steps
+        # This provides smooth motion and better gripper control
+        num_steps = int(self.low_level_frequency // self.control_frequency)
+        
+        for i in range(num_steps):
+            # Calculate interpolation factor (0 to 1)
+            alpha = (i + 1) / num_steps
+            
+            # Interpolate positions (linear)
+            left_pos_interp = (1 - alpha) * left_pos_current + alpha * left_pos
+            right_pos_interp = (1 - alpha) * right_pos_current + alpha * right_pos
+            
+            # Interpolate quaternions (spherical linear interpolation)
+            left_quat_interp = Quaternion.slerp(left_quat_current, left_quat_target, alpha)
+            right_quat_interp = Quaternion.slerp(right_quat_current, right_quat_target, alpha)
+            
+            # Set interpolated mocap poses
+            physics.data.mocap_pos[self._left_mocap_idx] = left_pos_interp
+            physics.data.mocap_quat[self._left_mocap_idx] = [
+                left_quat_interp.w, left_quat_interp.x, left_quat_interp.y, left_quat_interp.z
+            ]
+            
+            physics.data.mocap_pos[self._right_mocap_idx] = right_pos_interp
+            physics.data.mocap_quat[self._right_mocap_idx] = [
+                right_quat_interp.w, right_quat_interp.x, right_quat_interp.y, right_quat_interp.z
+            ]
+            
+            # Step physics
             self._mojo.step()
     
     def reset(self, reset_state: np.ndarray):
