@@ -670,4 +670,12 @@
     <position name="head_0_act" joint="head_0" kp="4000" kv="400" ctrlrange="-0.523 0.523"/>
     <position name="head_1_act" joint="head_1" kp="4000" kv="400" ctrlrange="-0.35 1.57"/>
   </actuator>
+  
+  <contact>
+    <!-- Exclude known problematic self-collisions in RBY1 model -->
+    <exclude body1="base" body2="link_torso_1"/>
+    <exclude body1="link_torso_2" body2="link_torso_4"/>
+    <exclude body1="link_right_arm_0" body2="link_right_arm_2"/>
+    <exclude body1="link_left_arm_0" body2="link_left_arm_2"/>
+  </contact>
 </mujoco>
