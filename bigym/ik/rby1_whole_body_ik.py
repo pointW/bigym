@@ -305,7 +305,7 @@ class RBY1WholeBodyIK:
         # Set reference posture with torso at zero
         reference_qpos = current_qpos.copy()
         # Keep torso joints (indices 11-16) at zero
-        reference_qpos[11:17] = 0.0
+        # reference_qpos[11:17] = 0.0
         posture_task.set_target(reference_qpos)
         tasks.append(posture_task)
         
