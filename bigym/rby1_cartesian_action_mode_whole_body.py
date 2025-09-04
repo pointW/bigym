@@ -115,6 +115,7 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         position_limits: tuple[float, float] = (-2.0, 2.0),
         block_until_reached: bool = False,
         direct_mode: bool = False,
+        control_frequency: int = 50,
     ):
         """Initialize RBY1 Cartesian action mode with whole-body IK.
         
@@ -122,6 +123,7 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
             position_limits: Min/max limits for end-effector positions
             block_until_reached: Whether to block until position is reached
             direct_mode: If True, directly set joint qpos (bypassing controllers)
+            control_frequency: Control frequency in Hz (default: 50)
         """
         
         # Initialize parent with no floating DOFs (we handle base control via whole-body IK)
@@ -130,6 +132,8 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         self.position_limits = position_limits
         self.block_until_reached = block_until_reached
         self.direct_mode = direct_mode  # Direct qpos control mode
+        self.control_frequency = control_frequency
+        self.low_level_frequency = 500  # Physics simulation frequency
         self._ik_solver = None
         self._base_target_body_id = None
         self._last_ik_solution = None  # Store last IK solution to avoid recomputation
@@ -273,7 +277,7 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         self._last_ik_solution = ik_solution
         self._last_ik_info = info  # Store IK solver info
         
-        # Step 2: Extract base position from IK solution and move base_target mocap
+        # Step 2: Extract base position from IK solution for mocap target
         # IK solution qpos structure: [base_x, base_y, base_z, quat_w, quat_x, quat_y, quat_z, ...]
         base_x = ik_solution[0]
         base_y = ik_solution[1]
@@ -283,101 +287,156 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         base_rz = np.arctan2(2*(quat[0]*quat[3] + quat[1]*quat[2]), 
                             1 - 2*(quat[2]**2 + quat[3]**2))
         
-        # Move base_target mocap body if it exists
-        if self._base_target_body_id >= 0:
-            model = self._mojo.physics.model._model
-            data = self._mojo.physics.data._data
-            
-            mocap_id = model.body_mocapid[self._base_target_body_id]
-            if mocap_id >= 0:
-                # Set mocap position
-                data.mocap_pos[mocap_id][0] = base_x
-                data.mocap_pos[mocap_id][1] = base_y
-                data.mocap_pos[mocap_id][2] = 0.0  # Keep Z at ground level
-                
-                # Set mocap orientation (only rotate around Z axis)
-                # Convert RZ back to quaternion
-                qw = np.cos(base_rz / 2)
-                qx = 0
-                qy = 0
-                qz = np.sin(base_rz / 2)
-                data.mocap_quat[mocap_id] = [qw, qx, qy, qz]
+        # Prepare target mocap quaternion for Z rotation
+        target_mocap_quat = np.array([np.cos(base_rz / 2), 0, 0, np.sin(base_rz / 2)])
+        
+        # Get current mocap pose for interpolation 
+        model = self._mojo.physics.model._model
+        data = self._mojo.physics.data._data
+        
+        mocap_id = model.body_mocapid[self._base_target_body_id]
+        if mocap_id >= 0:
+            current_mocap_pos = data.mocap_pos[mocap_id].copy()
+            current_mocap_quat = data.mocap_quat[mocap_id].copy()
         
         # Step 3: Apply joint positions from IK solution
         # RBY1 qpos structure: [base(3), quat(4), wheels(4), torso(6), right_arm(7), left_arm(7)]
         
-        # Skip base (3), quat (4), and wheels (4) to get actuated joints
-        actuated_start = 11  # After base(3) + quat(4) + wheels(4)
-        
-        # Extract torso and arm joints from IK solution
+        # Step 3: Extract joint positions from IK solution and interpolate
         # Note: qpos structure for RBY1 is:
         # [0:7] base, [7:11] wheels, [11:17] torso, [17:24] right arm, [24:32] right gripper, [32:39] left arm
         torso_joints = ik_solution[11:17]  # Torso at indices 11-16
         right_arm_joints = ik_solution[17:24]  # Right arm at indices 17-23
         left_arm_joints = ik_solution[32:39]  # Left arm at indices 32-38 (NOT 24-30!)
         
-        # Apply joint positions
+        # Target joint positions
         joint_positions = np.concatenate([torso_joints, right_arm_joints, left_arm_joints])
         
-        if self.direct_mode:
-            # ===== DIRECT MODE: Set qpos directly (bypassing controllers) =====
-            # This achieves perfect tracking like CartesianActionModeDirect
-            
-            # DIRECTLY SET BASE POSITION (bypass slow weld constraint)
-            # Set base X, Y from IK solution
-            data.qpos[0] = base_x  # Base X position
-            data.qpos[1] = base_y  # Base Y position
-            # data.qpos[2] is Z, keep as is (should be 0)
-            
-            # Set base orientation (quaternion)
-            data.qpos[3:7] = ik_solution[3:7]  # Copy quaternion from IK solution
-            
-            # Set wheel joints (qpos[7:11]) from IK solution
-            # These need to be consistent with base movement
-            data.qpos[7:11] = ik_solution[7:11]
-            
-            # Directly set joint positions in qpos
-            # Set torso joints: qpos[11:17]
-            data.qpos[11:17] = torso_joints
-            # Set right arm joints: qpos[17:24]
-            data.qpos[17:24] = right_arm_joints
-            # Set left arm joints: qpos[32:39]
-            data.qpos[32:39] = left_arm_joints
-            
-            # ALSO set ctrl to prevent motor drift
-            # (motors will try to drive joints back to ctrl if we don't update it)
-            for i in range(min(20, len(joint_positions))):
-                data.ctrl[i] = joint_positions[i]
-                
-            # Need to forward after direct qpos modification
-            mujoco.mj_forward(model, data)
-            
-        else:
-            # ===== STANDARD MODE: Send through actuators (PD control) =====
-            # This goes through motor controllers with gains kp=4000, kv=400
-            
-            # For RBY1, directly set ctrl values by actuator ID
-            # since limb_actuators may not be properly initialized
-            if len(self._robot.limb_actuators) == 0:
-                # Direct control for RBY1 actuators (IDs 0-19)
-                for i in range(min(20, len(joint_positions))):
-                    data.ctrl[i] = joint_positions[i]
-            else:
-                # Standard approach for other robots
-                for i, actuator in enumerate(self._robot.limb_actuators):
-                    # Set ctrl to the target position (absolute mode)
-                    actuator_bound = self._mojo.physics.bind(actuator)
-                    actuator_bound.ctrl = joint_positions[i]
+        # Get current joint positions for interpolation (ALWAYS from qpos for accuracy)
+        # Get current qpos values for joints we're controlling
+        current_torso = data.qpos[11:17].copy()
+        current_right_arm = data.qpos[17:24].copy()
+        current_left_arm = data.qpos[32:39].copy()
+        current_joint_positions = np.concatenate([current_torso, current_right_arm, current_left_arm])
         
-        # Step 4: Control grippers
+        # Also get current base position for interpolation (used in direct mode)
+        current_base_x = data.qpos[0]
+        current_base_y = data.qpos[1]
+        current_base_quat = data.qpos[3:7].copy()
+        current_wheels = data.qpos[7:11].copy()
+        
+        # Calculate number of interpolation steps
+        num_steps = int(self.low_level_frequency // self.control_frequency)
+        
+        # Linear interpolation over multiple physics steps
+        for step in range(num_steps):
+            # Calculate interpolation factor (0 to 1)
+            alpha = (step + 1) / num_steps
+            
+            # Interpolate mocap body
+            mocap_id = model.body_mocapid[self._base_target_body_id]
+            # Interpolate mocap position (only X and Y)
+            data.mocap_pos[mocap_id][0] = (1 - alpha) * current_mocap_pos[0] + alpha * base_x
+            data.mocap_pos[mocap_id][1] = (1 - alpha) * current_mocap_pos[1] + alpha * base_y
+            data.mocap_pos[mocap_id][2] = 0.0  # Keep Z at ground level
+            
+            # Interpolate mocap quaternion (SLERP would be better but linear is ok for small rotations)
+            interp_mocap_quat = (1 - alpha) * current_mocap_quat + alpha * target_mocap_quat
+            # Normalize quaternion
+            interp_mocap_quat = interp_mocap_quat / np.linalg.norm(interp_mocap_quat)
+            data.mocap_quat[mocap_id] = interp_mocap_quat
+            
+            if self.direct_mode:
+                # ===== DIRECT MODE: Interpolate and set qpos directly =====
+                
+                # Interpolate base position (only if direct mode controls base)
+                interp_base_x = (1 - alpha) * current_base_x + alpha * base_x
+                interp_base_y = (1 - alpha) * current_base_y + alpha * base_y
+                
+                # Set base X, Y from interpolated values
+                data.qpos[0] = interp_base_x
+                data.qpos[1] = interp_base_y
+                # data.qpos[2] is Z, keep as is (should be 0)
+                
+                # Interpolate base quaternion (using SLERP would be better but linear is acceptable for small rotations)
+                interp_base_quat = (1 - alpha) * current_base_quat + alpha * ik_solution[3:7]
+                # Normalize quaternion
+                interp_base_quat = interp_base_quat / np.linalg.norm(interp_base_quat)
+                data.qpos[3:7] = interp_base_quat
+                
+                # Interpolate wheel joints
+                interp_wheels = (1 - alpha) * current_wheels + alpha * ik_solution[7:11]
+                data.qpos[7:11] = interp_wheels
+                
+                # Interpolate joint positions
+                interp_joint_positions = (1 - alpha) * current_joint_positions + alpha * joint_positions
+                
+                # DEBUG: Print joint values at first and last interpolation step
+                # if (step == 0 or step == num_steps - 1):
+                #     print(f"\n=== Direct Mode Step {step}/{num_steps} (alpha={alpha:.3f}) ===")
+                #     print(f"Before setting qpos:")
+                #     print(f"  Left arm qpos[32:39]: {data.qpos[32:39]}")
+                #     print(f"  Target interp positions[13:20]: {interp_joint_positions[13:20]}")
+                
+                # Set torso joints: qpos[11:17]
+                data.qpos[11:17] = interp_joint_positions[0:6]
+                # Set right arm joints: qpos[17:24]
+                data.qpos[17:24] = interp_joint_positions[6:13]
+                # Set left arm joints: qpos[32:39]
+                data.qpos[32:39] = interp_joint_positions[13:20]
+                
+                # if (step == 0 or step == num_steps - 1):
+                #     print(f"After setting qpos:")
+                #     print(f"  Left arm qpos[32:39]: {data.qpos[32:39]}")
+                
+                # ALSO set ctrl to prevent motor drift
+                for i, actuator in enumerate(self._robot.limb_actuators):
+                    # Set ctrl to the interpolated position
+                    actuator_bound = self._mojo.physics.bind(actuator)
+                    actuator_bound.ctrl = interp_joint_positions[i]
+                
+                # if (step == 0 or step == num_steps - 1):
+                #     print(f"After setting ctrl:")
+                #     print(f"  ctrl[13:20]: {data.ctrl[13:20]}")
+                
+                # Need to forward after direct qpos modification
+                mujoco.mj_forward(model, data)
+                
+                # if (step == 0 or step == num_steps - 1):
+                #     print(f"After mj_forward:")
+                #     print(f"  Left arm qpos[32:39]: {data.qpos[32:39]}")
+                
+            else:
+                # ===== STANDARD MODE: Interpolate ctrl values =====
+                
+                # Interpolate joint positions
+                interp_joint_positions = (1 - alpha) * current_joint_positions + alpha * joint_positions
+                
+                for i, actuator in enumerate(self._robot.limb_actuators):
+                    # Set ctrl to the interpolated position
+                    actuator_bound = self._mojo.physics.bind(actuator)
+                    actuator_bound.ctrl = interp_joint_positions[i]
+            
+            # Step the simulation for this interpolation step
+            if self.block_until_reached:
+                self._step_until_reached()
+            else:
+                self._mojo.step()
+        
+        # Step 4: Control grippers at the end and step 100 times for gripper action
+        # if self.direct_mode:
+        #     print(f"\n=== Before gripper control steps ===")
+        #     print(f"  Left arm qpos[32:39]: {data.qpos[32:39]}")
+        
         for side, action in zip(self._robot.grippers, gripper_action):
             self._robot.grippers[side].set_control(action)
         
-        # Step the simulation
-        if self.block_until_reached:
-            self._step_until_reached()
-        else:
+        # Step 100 times to allow grippers to fully actuate
+        for gripper_step in range(100):
             self._mojo.step()
+            # if self.direct_mode and (gripper_step == 0 or gripper_step == 99):
+            #     print(f"\n=== After gripper step {gripper_step+1}/100 ===")
+            #     print(f"  Left arm qpos[32:39]: {data.qpos[32:39]}")
         
     def reset(self, reset_state: np.ndarray):
         """Reset robot state.
