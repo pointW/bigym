@@ -296,16 +296,38 @@ class RBY1WholeBodyIK:
                 tasks.append(wheel_task)
                 break  # One task is sufficient for all wheels due to implementation
         
-        # 6. General posture task for redundancy resolution and stability
-        # Moderate cost to balance tracking and stability
+        # 6. Torso movement penalty task
+        # Define preferred ranges for torso joints (in radians)
+        # torso_1: -10° to 45° = -0.175 to 0.785 rad
+        # torso_2: -90° to 10° = -1.571 to 0.175 rad  
+        # torso_3: -10° to 45° = -0.175 to 0.785 rad
+        # torso_0, torso_4, torso_5: keep small range around 0
+        
+        torso_reference = current_qpos.copy()
+        # Set preferred torso positions (middle of safe range)
+        torso_reference[11] = 0.0      # torso_0: stay near 0
+        torso_reference[12] = 0.305    # torso_1: middle of [-0.175, 0.785]
+        torso_reference[13] = -0.698   # torso_2: middle of [-1.571, 0.175]
+        torso_reference[14] = 0.305    # torso_3: middle of [-0.175, 0.785]
+        torso_reference[15] = 0.0      # torso_4: stay near 0
+        torso_reference[16] = 0.0      # torso_5: stay near 0
+        
+        # Create posture task with moderate cost for torso regularization
+        torso_task = mink.PostureTask(
+            model=self.model,
+            cost=100.0  # Higher cost to discourage torso movement
+        )
+        torso_task.set_target(torso_reference)
+        tasks.append(torso_task)
+        
+        # 7. General posture task for redundancy resolution and stability
+        # Lower cost for arm joints to allow free movement
         posture_task = mink.PostureTask(
             model=self.model,
-            cost=50.0  # Balance between tracking accuracy and stability
+            cost=10.0  # Lower cost - mainly for arm redundancy resolution
         )
-        # Set reference posture with torso at zero
+        # Set reference posture
         reference_qpos = current_qpos.copy()
-        # Keep torso joints (indices 11-16) at zero
-        # reference_qpos[11:17] = 0.0
         posture_task.set_target(reference_qpos)
         tasks.append(posture_task)
         
