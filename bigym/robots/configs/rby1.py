@@ -211,8 +211,8 @@ class RBY1(Robot):
                     "weld", 
                     body1="base_target", 
                     body2="rby1/base",
-                    solimp=[0.95, 0.99, 0.001], 
-                    solref=[0.02, 1]
+                    solimp=[0.99, 0.999, 0.001, 0.5, 2],
+                    solref=[0.001, 1],
                 )
 
     def _fix_limb_actuators(self):

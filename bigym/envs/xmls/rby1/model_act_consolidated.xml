@@ -10,7 +10,7 @@
   </visual>
   <default>
     <material shininess="0.25"/>
-    <joint range="-3.14 3.14" armature="0.1" damping="0.5"/>
+    <!-- <joint range="-3.14 3.14" armature="0.1" damping="0.5"/> -->
     <position ctrllimited="true" kp="4000" kv="400"/>
     <default class="visual">
       <material shininess="0.5"/>
@@ -647,7 +647,7 @@
       </body>
     </body>
   </worldbody>
-  <actuator>
+  <!-- <actuator>
     <position name="torso_0" joint="torso_0" kp="50000" kv="2000" ctrlrange="-0.349066 0.349066"/>
     <position name="torso_1" joint="torso_1" kp="50000" kv="2000" ctrlrange="-1.0472 1.52173"/>
     <position name="torso_2" joint="torso_2" kp="50000" kv="2000" ctrlrange="-2.47837 1.5708"/>
@@ -670,96 +670,76 @@
     <position name="left_arm_6" joint="left_arm_6" kp="50000" kv="2000" ctrlrange="-6.28319 6.28319"/>
     <position name="head_0_act" joint="head_0" kp="4000" kv="400" ctrlrange="-0.523 0.523"/>
     <position name="head_1_act" joint="head_1" kp="4000" kv="400" ctrlrange="-0.35 1.57"/>
-  </actuator>
-  <!-- <actuator>
-    <general name="torso_0" joint="torso_0" ctrlrange="-0.349066 0.349066"/>
-    <general name="torso_1" joint="torso_1" ctrlrange="-1.0472 1.52173"/>
-    <general name="torso_2" joint="torso_2" ctrlrange="-2.47837 1.5708"/>
-    <general name="torso_3" joint="torso_3" ctrlrange="-0.785398 1.5708"/>
-    <general name="torso_4" joint="torso_4" ctrlrange="-0.523599 0.523599"/>
-    <general name="torso_5" joint="torso_5" ctrlrange="-1.5708 1.5708"/>
-    <general name="right_arm_0" joint="right_arm_0" ctrlrange="-6.28319 6.28319"/>
-    <general name="right_arm_1" joint="right_arm_1" ctrlrange="-6.28319 6.28319"/>
-    <general name="right_arm_2" joint="right_arm_2" ctrlrange="-6.28319 6.28319"/>
-    <general name="right_arm_3" joint="right_arm_3" ctrlrange="-6.28319 6.28319"/>
-    <general name="right_arm_4" joint="right_arm_4" ctrlrange="-6.28319 6.28319"/>
-    <general name="right_arm_5" joint="right_arm_5" ctrlrange="-6.28319 6.28319"/>
-    <general name="right_arm_6" joint="right_arm_6" ctrlrange="-6.28319 6.28319"/>
-    <general name="left_arm_0" joint="left_arm_0" ctrlrange="-6.28319 6.28319"/>
-    <general name="left_arm_1" joint="left_arm_1" ctrlrange="-6.28319 6.28319"/>
-    <general name="left_arm_2" joint="left_arm_2" ctrlrange="-6.28319 6.28319"/>
-    <general name="left_arm_3" joint="left_arm_3" ctrlrange="-6.28319 6.28319"/>
-    <general name="left_arm_4" joint="left_arm_4" ctrlrange="-6.28319 6.28319"/>
-    <general name="left_arm_5" joint="left_arm_5" ctrlrange="-6.28319 6.28319"/>
-    <general name="left_arm_6" joint="left_arm_6" ctrlrange="-6.28319 6.28319"/>
-    <general name="head_0_act" joint="head_0" ctrlrange="-0.523 0.523"/>
-    <general name="head_1_act" joint="head_1" ctrlrange="-0.35 1.57"/>
-  </actuator> -->
-  <!-- <actuator>
-    
-    <position name="torso_0" joint="torso_0" kp="32000" kv="1000" ctrlrange="-0.349066 0.349066"/>
-    <position name="torso_1" joint="torso_1" kp="32000" kv="1000" ctrlrange="-1.0472 1.52173"/>
-    <position name="torso_2" joint="torso_2" kp="36000" kv="1100" ctrlrange="-2.47837 1.5708"/>
-    <position name="torso_3" joint="torso_3" kp="32000" kv="1000" ctrlrange="-0.785398 1.5708"/>
-    <position name="torso_4" joint="torso_4" kp="24000" kv="800"  ctrlrange="-0.523599 0.523599"/>
-    <position name="torso_5" joint="torso_5" kp="36000" kv="1200" ctrlrange="-1.5708 1.5708"/>
-    <position name="right_arm_0" joint="right_arm_0" kp="6400" kv="160" ctrlrange="-6.28319 6.28319"/>
-    <position name="right_arm_1" joint="right_arm_1" kp="6400" kv="160" ctrlrange="-6.28319 6.28319"/>
-    <position name="right_arm_2" joint="right_arm_2" kp="6400" kv="160" ctrlrange="-6.28319 6.28319"/>
-    <position name="right_arm_3" joint="right_arm_3" kp="6400" kv="160" ctrlrange="-6.28319 6.28319"/>
-    <position name="right_arm_4" joint="right_arm_4" kp="6400" kv="160" ctrlrange="-6.28319 6.28319"/>
-    <position name="right_arm_5" joint="right_arm_5" kp="6400" kv="160" ctrlrange="-6.28319 6.28319"/>
-    <position name="right_arm_6" joint="right_arm_6" kp="6400" kv="160" ctrlrange="-6.28319 6.28319"/>
-    <position name="left_arm_0" joint="left_arm_0" kp="6400" kv="160" ctrlrange="-6.28319 6.28319"/>
-    <position name="left_arm_1" joint="left_arm_1" kp="6400" kv="160" ctrlrange="-6.28319 6.28319"/>
-    <position name="left_arm_2" joint="left_arm_2" kp="6400" kv="160" ctrlrange="-6.28319 6.28319"/>
-    <position name="left_arm_3" joint="left_arm_3" kp="6400" kv="160" ctrlrange="-6.28319 6.28319"/>
-    <position name="left_arm_4" joint="left_arm_4" kp="6400" kv="160" ctrlrange="-6.28319 6.28319"/>
-    <position name="left_arm_5" joint="left_arm_5" kp="6400" kv="160" ctrlrange="-6.28319 6.28319"/>
-    <position name="left_arm_6" joint="left_arm_6" kp="6400" kv="160" ctrlrange="-6.28319 6.28319"/>
-    
-    <position name="head_0_act" joint="head_0" ctrlrange="-0.523 0.523"/>
-    <position name="head_1_act" joint="head_1" ctrlrange="-0.35 1.57"/>
   </actuator> -->
 
-  <!-- <contact>
-    Exclude known problematic self-collisions in RBY1 model
-    <exclude body1="base" body2="link_torso_1"/>
-    <exclude body1="link_torso_2" body2="link_torso_4"/>
-    <exclude body1="link_right_arm_0" body2="link_right_arm_2"/>
-    <exclude body1="link_left_arm_0" body2="link_left_arm_2"/>
-  </contact> -->
-  <!-- <contact>
-    Exclude known problematic self-collisions in RBY1 model
-    <exclude body1="base" body2="link_torso_1"/>
-    <exclude body1="link_torso_2" body2="link_torso_4"/>
-    <exclude body1="link_right_arm_0" body2="link_right_arm_2"/>
-    <exclude body1="link_left_arm_0" body2="link_left_arm_2"/>
-    Exclude most critical self-collisions based on analysis
-    <exclude body1="link_torso_5" body2="link_right_arm_5"/>
-    <exclude body1="link_torso_5" body2="link_left_arm_5"/>
-    <exclude body1="link_torso_4" body2="link_right_arm_3"/>
-    <exclude body1="link_torso_4" body2="link_left_arm_3"/>
-    <exclude body1="link_torso_2" body2="base"/>
-    <exclude body1="link_torso_3" body2="link_right_arm_2"/>
-    <exclude body1="link_torso_3" body2="link_left_arm_2"/>
-    
-    Additional collision pairs found in testing
-    <exclude body1="link_left_arm_2" body2="link_torso_5"/>
-    <exclude body1="link_right_arm_2" body2="link_torso_5"/>
-    
-    Additional torso-arm exclusions for safety
-    <exclude body1="link_torso_3" body2="link_right_arm_3"/>
-    <exclude body1="link_torso_3" body2="link_right_arm_4"/>
-    <exclude body1="link_torso_3" body2="link_left_arm_3"/>
-    <exclude body1="link_torso_3" body2="link_left_arm_4"/>
-    <exclude body1="link_torso_4" body2="link_right_arm_2"/>
-    <exclude body1="link_torso_4" body2="link_right_arm_4"/>
-    <exclude body1="link_torso_4" body2="link_left_arm_2"/>
-    <exclude body1="link_torso_4" body2="link_left_arm_4"/>
-    <exclude body1="link_torso_5" body2="link_right_arm_3"/>
-    <exclude body1="link_torso_5" body2="link_right_arm_4"/>
-    <exclude body1="link_torso_5" body2="link_left_arm_3"/>
-    <exclude body1="link_torso_5" body2="link_left_arm_4"/>
-  </contact> -->
+  <actuator>
+    <position name="torso_0" joint="torso_0" kp="30000" kv="1000" ctrlrange="-0.349066 0.349066"/>
+    <position name="torso_1" joint="torso_1" kp="35000" kv="1200" ctrlrange="-1.0472 1.52173"/>
+    <position name="torso_2" joint="torso_2" kp="30000" kv="1200" ctrlrange="-2.47837 1.5708"/>
+    <position name="torso_3" joint="torso_3" kp="20000" kv="900" ctrlrange="-0.785398 1.5708"/>
+    <position name="torso_4" joint="torso_4" kp="30000" kv="1000" ctrlrange="-0.523599 0.523599"/>
+    <position name="torso_5" joint="torso_5" kp="15000" kv="600" ctrlrange="-1.5708 1.5708"/>
+    <position name="right_arm_0" joint="right_arm_0" kp="20000" kv="700" ctrlrange="-6.28319 6.28319"/>
+    <position name="right_arm_1" joint="right_arm_1" kp="20000" kv="700" ctrlrange="-6.28319 6.28319"/>
+    <position name="right_arm_2" joint="right_arm_2" kp="2000" kv="60" ctrlrange="-6.28319 6.28319"/>
+    <position name="right_arm_3" joint="right_arm_3" kp="8000" kv="300" ctrlrange="-6.28319 6.28319"/>
+    <position name="right_arm_4" joint="right_arm_4" kp="300" kv="10" ctrlrange="-6.28319 6.28319"/>
+    <position name="right_arm_5" joint="right_arm_5" kp="2000" kv="90" ctrlrange="-6.28319 6.28319"/>
+    <position name="right_arm_6" joint="right_arm_6" kp="100" kv="3" ctrlrange="-6.28319 6.28319"/>
+    <position name="left_arm_0" joint="left_arm_0" kp="20000" kv="700" ctrlrange="-6.28319 6.28319"/>
+    <position name="left_arm_1" joint="left_arm_1" kp="20000" kv="700" ctrlrange="-6.28319 6.28319"/>
+    <position name="left_arm_2" joint="left_arm_2" kp="2000" kv="60" ctrlrange="-6.28319 6.28319"/>
+    <position name="left_arm_3" joint="left_arm_3" kp="8000" kv="300" ctrlrange="-6.28319 6.28319"/>
+    <position name="left_arm_4" joint="left_arm_4" kp="300" kv="10" ctrlrange="-6.28319 6.28319"/>
+    <position name="left_arm_5" joint="left_arm_5" kp="2000" kv="90" ctrlrange="-6.28319 6.28319"/>
+    <position name="left_arm_6" joint="left_arm_6" kp="100" kv="3" ctrlrange="-6.28319 6.28319"/>
+    <position name="head_0_act" joint="head_0" kp="4000" kv="400" ctrlrange="-0.523 0.523"/>
+    <position name="head_1_act" joint="head_1" kp="4000" kv="400" ctrlrange="-0.35 1.57"/>
+
+    <!-- <position name="torso_0" joint="torso_0" kp="30000" kv="500" ctrlrange="-0.349066 0.349066"/>
+    <position name="torso_1" joint="torso_1" kp="35000" kv="700" ctrlrange="-1.0472 1.52173"/>
+    <position name="torso_2" joint="torso_2" kp="30000" kv="600" ctrlrange="-2.47837 1.5708"/>
+    <position name="torso_3" joint="torso_3" kp="20000" kv="400" ctrlrange="-0.785398 1.5708"/>
+    <position name="torso_4" joint="torso_4" kp="30000" kv="600" ctrlrange="-0.523599 0.523599"/>
+    <position name="torso_5" joint="torso_5" kp="15000" kv="300" ctrlrange="-1.5708 1.5708"/>
+    <position name="right_arm_0" joint="right_arm_0" kp="20000" kv="400" ctrlrange="-6.28319 6.28319"/>
+    <position name="right_arm_1" joint="right_arm_1" kp="20000" kv="350" ctrlrange="-6.28319 6.28319"/>
+    <position name="right_arm_2" joint="right_arm_2" kp="200" kv="3" ctrlrange="-6.28319 6.28319"/>
+    <position name="right_arm_3" joint="right_arm_3" kp="5000" kv="90" ctrlrange="-6.28319 6.28319"/>
+    <position name="right_arm_4" joint="right_arm_4" kp="200" kv="2" ctrlrange="-6.28319 6.28319"/>
+    <position name="right_arm_5" joint="right_arm_5" kp="500" kv="8" ctrlrange="-6.28319 6.28319"/>
+    <position name="right_arm_6" joint="right_arm_6" kp="100" kv="1" ctrlrange="-6.28319 6.28319"/>
+    <position name="left_arm_0" joint="left_arm_0" kp="20000" kv="400" ctrlrange="-6.28319 6.28319"/>
+    <position name="left_arm_1" joint="left_arm_1" kp="20000" kv="350" ctrlrange="-6.28319 6.28319"/>
+    <position name="left_arm_2" joint="left_arm_2" kp="200" kv="3" ctrlrange="-6.28319 6.28319"/>
+    <position name="left_arm_3" joint="left_arm_3" kp="5000" kv="90" ctrlrange="-6.28319 6.28319"/>
+    <position name="left_arm_4" joint="left_arm_4" kp="200" kv="2" ctrlrange="-6.28319 6.28319"/>
+    <position name="left_arm_5" joint="left_arm_5" kp="500" kv="8" ctrlrange="-6.28319 6.28319"/>
+    <position name="left_arm_6" joint="left_arm_6" kp="100" kv="1" ctrlrange="-6.28319 6.28319"/>
+    <position name="head_0_act" joint="head_0" kp="4000" kv="400" ctrlrange="-0.523 0.523"/>
+    <position name="head_1_act" joint="head_1" kp="4000" kv="400" ctrlrange="-0.35 1.57"/> -->
+
+    <!-- <position name="torso_0" joint="torso_0" kp="4000" kv="400" ctrlrange="-0.349066 0.349066"/>
+    <position name="torso_1" joint="torso_1" kp="4000" kv="400" ctrlrange="-1.0472 1.52173"/>
+    <position name="torso_2" joint="torso_2" kp="4000" kv="400" ctrlrange="-2.47837 1.5708"/>
+    <position name="torso_3" joint="torso_3" kp="4000" kv="400" ctrlrange="-0.785398 1.5708"/>
+    <position name="torso_4" joint="torso_4" kp="4000" kv="400" ctrlrange="-0.523599 0.523599"/>
+    <position name="torso_5" joint="torso_5" kp="4000" kv="400" ctrlrange="-1.5708 1.5708"/>
+    <position name="right_arm_0" joint="right_arm_0" kp="4000" kv="400" ctrlrange="-6.28319 6.28319"/>
+    <position name="right_arm_1" joint="right_arm_1" kp="4000" kv="400" ctrlrange="-6.28319 6.28319"/>
+    <position name="right_arm_2" joint="right_arm_2" kp="4000" kv="400" ctrlrange="-6.28319 6.28319"/>
+    <position name="right_arm_3" joint="right_arm_3" kp="4000" kv="400" ctrlrange="-6.28319 6.28319"/>
+    <position name="right_arm_4" joint="right_arm_4" kp="4000" kv="400" ctrlrange="-6.28319 6.28319"/>
+    <position name="right_arm_5" joint="right_arm_5" kp="4000" kv="400" ctrlrange="-6.28319 6.28319"/>
+    <position name="right_arm_6" joint="right_arm_6" kp="4000" kv="400" ctrlrange="-6.28319 6.28319"/>
+    <position name="left_arm_0" joint="left_arm_0" kp="4000" kv="400" ctrlrange="-6.28319 6.28319"/>
+    <position name="left_arm_1" joint="left_arm_1" kp="4000" kv="400" ctrlrange="-6.28319 6.28319"/>
+    <position name="left_arm_2" joint="left_arm_2" kp="4000" kv="400" ctrlrange="-6.28319 6.28319"/>
+    <position name="left_arm_3" joint="left_arm_3" kp="4000" kv="400" ctrlrange="-6.28319 6.28319"/>
+    <position name="left_arm_4" joint="left_arm_4" kp="4000" kv="400" ctrlrange="-6.28319 6.28319"/>
+    <position name="left_arm_5" joint="left_arm_5" kp="4000" kv="400" ctrlrange="-6.28319 6.28319"/>
+    <position name="left_arm_6" joint="left_arm_6" kp="4000" kv="400" ctrlrange="-6.28319 6.28319"/>
+    <position name="head_0_act" joint="head_0" kp="4000" kv="400" ctrlrange="-0.523 0.523"/>
+    <position name="head_1_act" joint="head_1" kp="4000" kv="400" ctrlrange="-0.35 1.57"/> -->
+  </actuator>
 </mujoco>

@@ -116,8 +116,8 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         block_until_reached: bool = False,
         direct_mode: bool = False,
         control_frequency: int = 50,
-        interpolation_frequency: int = 500,
-        low_level_frequency: int = 5000,
+        interpolation_frequency: int = 200,
+        low_level_frequency: int = 1000,
     ):
         """Initialize RBY1 Cartesian action mode with whole-body IK.
         

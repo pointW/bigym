@@ -41,6 +41,7 @@ def get_environment_class(env_name: str) -> Type:
         'MovePlates': 'bigym.envs.move_plates',  # Alias
         'PickCube': 'bigym.envs.pick_cube',
         'StackBlocks': 'bigym.envs.stack_blocks',
+        'FlipCup': 'bigym.envs.manipulation',
         # Add more environments here as needed
     }
     
@@ -191,7 +192,7 @@ def test_rby1_cartesian(
     print(f"\n{mode_name}:")
     
     env = env_class(
-        action_mode=RBY1CartesianActionModeWholeBody(direct_mode=direct_mode, block_until_reached=True),
+        action_mode=RBY1CartesianActionModeWholeBody(direct_mode=direct_mode, block_until_reached=False, control_frequency=control_frequency),
         control_frequency=control_frequency,
         render_mode=None,
         robot_cls=RBY1
@@ -266,7 +267,10 @@ def test_rby1_vs_h1(
     env_name: str,
     n_demos: int = 10,
     control_frequency: int = 50,
-    rby1_demo_dir: Optional[str] = None
+    rby1_demo_dir: Optional[str] = None,
+    test_h1: bool = True,
+    test_rby1_pd: bool = True,
+    test_rby1_direct: bool = True
 ):
     """Test RBY1 performance against H1 baseline.
     
@@ -275,11 +279,28 @@ def test_rby1_vs_h1(
         n_demos: Number of demos to test
         control_frequency: Control frequency
         rby1_demo_dir: Directory for RBY1 demos (auto-generated if None)
+        test_h1: Whether to test H1 baseline
+        test_rby1_pd: Whether to test RBY1 with PD control
+        test_rby1_direct: Whether to test RBY1 with direct control
     """
     print("="*80)
     print(f"TESTING RBY1 vs H1 on {env_name} (n={n_demos})")
     print("="*80)
-    print("\nComparing RBY1 whole-body control against H1 baseline")
+    
+    # Show which tests will be run
+    tests_to_run = []
+    if test_h1:
+        tests_to_run.append("H1 baseline")
+    if test_rby1_pd:
+        tests_to_run.append("RBY1 PD-controlled")
+    if test_rby1_direct:
+        tests_to_run.append("RBY1 direct")
+    
+    if not tests_to_run:
+        print("No tests selected! Use --h1, --rby1-pd, or --rby1-direct flags.")
+        return
+    
+    print(f"\nRunning tests: {', '.join(tests_to_run)}")
     print("-"*80)
     
     # Get environment class and camera config
@@ -293,58 +314,72 @@ def test_rby1_vs_h1(
     results = {}
     all_seed_results = {}
     success_counts = {}
+    test_seeds = set()
+    h1_demos = []
     
     # Test 1: H1 Joint Actions (baseline)
-    h1_seed_results, h1_demos, h1_sr = test_h1_baseline(
-        env_class, camera_configs, n_demos, control_frequency
-    )
-    results["H1 Joint Actions"] = h1_sr
-    success_counts["H1 Joint Actions"] = sum(1 for (s, _) in h1_seed_results.values() if s)
-    
-    # Collect test seeds
-    test_seeds = set(demo.seed for demo in h1_demos)
-    
-    # Merge results
-    for seed, result in h1_seed_results.items():
-        if seed not in all_seed_results:
-            all_seed_results[seed] = {}
-        all_seed_results[seed]['h1'] = result
+    if test_h1:
+        h1_seed_results, h1_demos, h1_sr = test_h1_baseline(
+            env_class, camera_configs, n_demos, control_frequency
+        )
+        results["H1 Joint Actions"] = h1_sr
+        success_counts["H1 Joint Actions"] = sum(1 for (s, _) in h1_seed_results.values() if s)
+        
+        # Collect test seeds
+        test_seeds = set(demo.seed for demo in h1_demos)
+        
+        # Merge results
+        for seed, result in h1_seed_results.items():
+            if seed not in all_seed_results:
+                all_seed_results[seed] = {}
+            all_seed_results[seed]['h1'] = result
+    else:
+        # If not testing H1, we need to get seeds from RBY1 demos
+        demo_dir_path = Path(rby1_demo_dir)
+        if demo_dir_path.exists():
+            demo_files = sorted(demo_dir_path.glob("rby1_cartesian_demo_*.safetensors"))[:n_demos]
+            for demo_file in demo_files:
+                demo = Demo.from_safetensors(demo_file)
+                if demo:
+                    test_seeds.add(demo.seed)
     
     # Test 2: RBY1 Cartesian (PD-controlled)
-    rby1_pd_seed_results, rby1_pd_sr = test_rby1_cartesian(
-        env_class,
-        "2. RBY1 CARTESIAN (PD-controlled)",
-        rby1_demo_dir,
-        test_seeds,
-        direct_mode=False,
-        control_frequency=control_frequency
-    )
-    results["RBY1 Cartesian PD"] = rby1_pd_sr
-    success_counts["RBY1 Cartesian PD"] = sum(1 for (s, _) in rby1_pd_seed_results.values() if s)
-    
-    # Merge results
-    for seed, result in rby1_pd_seed_results.items():
-        if seed not in all_seed_results:
-            all_seed_results[seed] = {}
-        all_seed_results[seed]['rby1_pd'] = result
+    if test_rby1_pd:
+        rby1_pd_seed_results, rby1_pd_sr = test_rby1_cartesian(
+            env_class,
+            "2. RBY1 CARTESIAN (PD-controlled)",
+            rby1_demo_dir,
+            test_seeds,
+            direct_mode=False,
+            control_frequency=control_frequency
+        )
+        results["RBY1 Cartesian PD"] = rby1_pd_sr
+        success_counts["RBY1 Cartesian PD"] = sum(1 for (s, _) in rby1_pd_seed_results.values() if s)
+        
+        # Merge results
+        for seed, result in rby1_pd_seed_results.items():
+            if seed not in all_seed_results:
+                all_seed_results[seed] = {}
+            all_seed_results[seed]['rby1_pd'] = result
     
     # Test 3: RBY1 Cartesian Direct
-    rby1_direct_seed_results, rby1_direct_sr = test_rby1_cartesian(
-        env_class,
-        "3. RBY1 CARTESIAN DIRECT (direct qpos control)",
-        rby1_demo_dir,
-        test_seeds,
-        direct_mode=True,
-        control_frequency=control_frequency
-    )
-    results["RBY1 Cartesian Direct"] = rby1_direct_sr
-    success_counts["RBY1 Cartesian Direct"] = sum(1 for (s, _) in rby1_direct_seed_results.values() if s)
-    
-    # Merge results
-    for seed, result in rby1_direct_seed_results.items():
-        if seed not in all_seed_results:
-            all_seed_results[seed] = {}
-        all_seed_results[seed]['rby1_direct'] = result
+    if test_rby1_direct:
+        rby1_direct_seed_results, rby1_direct_sr = test_rby1_cartesian(
+            env_class,
+            "3. RBY1 CARTESIAN DIRECT (direct qpos control)",
+            rby1_demo_dir,
+            test_seeds,
+            direct_mode=True,
+            control_frequency=control_frequency
+        )
+        results["RBY1 Cartesian Direct"] = rby1_direct_sr
+        success_counts["RBY1 Cartesian Direct"] = sum(1 for (s, _) in rby1_direct_seed_results.values() if s)
+        
+        # Merge results
+        for seed, result in rby1_direct_seed_results.items():
+            if seed not in all_seed_results:
+                all_seed_results[seed] = {}
+            all_seed_results[seed]['rby1_direct'] = result
     
     # Calculate step statistics
     step_stats = {}
@@ -485,8 +520,8 @@ def main():
     parser.add_argument(
         "--n-demos",
         type=int,
-        default=10,
-        help="Number of demos to test (default: 10)"
+        default=60,
+        help="Number of demos to test (default: 60)"
     )
     parser.add_argument(
         "--control-freq",
@@ -501,13 +536,55 @@ def main():
         help="Directory for RBY1 demos (auto-generated if not specified)"
     )
     
+    # Add test selection flags
+    parser.add_argument(
+        "--h1",
+        action="store_true",
+        default=False,
+        help="Test H1 baseline (default: False)"
+    )
+    parser.add_argument(
+        "--rby1-pd",
+        action="store_true",
+        default=True,
+        help="Test RBY1 with PD control (default: False)"
+    )
+    parser.add_argument(
+        "--rby1-direct",
+        action="store_true",
+        default=False,
+        help="Test RBY1 with direct control (default: False)"
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        default=False,
+        help="Run all tests (equivalent to --h1 --rby1-pd --rby1-direct)"
+    )
+    
     args = parser.parse_args()
+    
+    # Determine which tests to run
+    test_h1 = args.h1 or args.all
+    test_rby1_pd = args.rby1_pd or args.all
+    test_rby1_direct = args.rby1_direct or args.all
+    
+    # If no specific tests selected, default to all
+    if not (test_h1 or test_rby1_pd or test_rby1_direct):
+        print("No tests specified. Use --h1, --rby1-pd, --rby1-direct, or --all")
+        print("Defaulting to --all (running all tests)")
+        test_h1 = True
+        test_rby1_pd = True
+        test_rby1_direct = True
     
     test_rby1_vs_h1(
         env_name=args.env,
         n_demos=args.n_demos,
         control_frequency=args.control_freq,
-        rby1_demo_dir=args.rby1_dir
+        rby1_demo_dir=args.rby1_dir,
+        test_h1=test_h1,
+        test_rby1_pd=test_rby1_pd,
+        test_rby1_direct=test_rby1_direct
     )
 
 

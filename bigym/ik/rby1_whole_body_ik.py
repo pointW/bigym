@@ -126,8 +126,8 @@ class RBY1WholeBodyIK:
         right_target_pos: Optional[np.ndarray] = None,
         right_target_quat: Optional[np.ndarray] = None,
         current_qpos: Optional[np.ndarray] = None,
-        max_iterations: int = 100,
-        tolerance: float = 1e-3,
+        max_iterations: int = 100,  # Not used in current implementation but kept for API compatibility
+        tolerance: float = 1e-3,  # Not used in current implementation but kept for API compatibility
         left_body_relative: bool = False,
         right_body_relative: bool = False,
     ) -> Tuple[np.ndarray, bool, Dict]:
@@ -163,18 +163,18 @@ class RBY1WholeBodyIK:
         initial_base_pos = current_qpos[:3].copy()  # [x, y, z]
         initial_base_quat = current_qpos[3:7].copy()  # [w, x, y, z]
         
-        # Store initial EE positions in body frame if needed
-        if left_body_relative and left_target_pos is not None:
-            # For body-relative constraints, we want to maintain the hand's position
-            # relative to the body. Since we're dealing with a wheeled robot that 
-            # primarily moves in X-Y and rotates around Z, we'll use a simplified
-            # approach: maintain the offset from the base in world frame.
-            # This works well for small rotations.
-            left_body_offset = left_target_pos - initial_base_pos
-            
-        if right_body_relative and right_target_pos is not None:
-            # Same for right hand
-            right_body_offset = right_target_pos - initial_base_pos
+        # Store initial EE positions in body frame if needed (currently not used in simplified solver)
+        # if left_body_relative and left_target_pos is not None:
+        #     # For body-relative constraints, we want to maintain the hand's position
+        #     # relative to the body. Since we're dealing with a wheeled robot that 
+        #     # primarily moves in X-Y and rotates around Z, we'll use a simplified
+        #     # approach: maintain the offset from the base in world frame.
+        #     # This works well for small rotations.
+        #     left_body_offset = left_target_pos - initial_base_pos
+        #     
+        # if right_body_relative and right_target_pos is not None:
+        #     # Same for right hand
+        #     right_body_offset = right_target_pos - initial_base_pos
         
         # Create configuration from current state
         configuration = mink.Configuration(self.model, current_qpos.copy())
@@ -279,6 +279,27 @@ class RBY1WholeBodyIK:
         com_stability_task.set_target(mink.SE3.from_matrix(relative_matrix))
         tasks.append(com_stability_task)
         
+        # # 4b. Torso height relative to grippers task
+        # # Encourage torso to be 10cm higher than average gripper height
+        # # Calculate average gripper z position
+        # gripper_z_sum = left_target_pos[2] + right_target_pos[2]        
+        # avg_gripper_z = gripper_z_sum / 2
+        # target_torso_z = avg_gripper_z + 0.3  # 10cm higher
+        
+        # # Create a task for torso height
+        # torso_height_task = mink.FrameTask(
+        #     frame_name=self.torso5_name,
+        #     frame_type="body",
+        #     position_cost=[0.0, 0.0, 100.0],  # Only constrain Z with medium cost
+        #     orientation_cost=0.0,  # Don't constrain orientation
+        #     lm_damping=1e-4,
+        # )
+        # # Set target with desired Z height
+        # torso_height_matrix = np.eye(4)
+        # torso_height_matrix[2, 3] = target_torso_z
+        # torso_height_task.set_target(mink.SE3.from_matrix(torso_height_matrix))
+        # tasks.append(torso_height_task)
+
         # 5. Wheel joint constraints (wheels should not move - passive)
         # Create individual joint tasks for each wheel to keep them fixed
         for wheel_name in self.wheel_joint_names:
@@ -302,129 +323,36 @@ class RBY1WholeBodyIK:
         # torso_2: -90° to 10° = -1.571 to 0.175 rad  
         # torso_3: -10° to 45° = -0.175 to 0.785 rad
         # torso_0, torso_4, torso_5: keep small range around 0
-        
-        torso_reference = current_qpos.copy()
-        # Set preferred torso positions (middle of safe range)
-        torso_reference[11] = 0.0      # torso_0: stay near 0
-        torso_reference[12] = 0.305    # torso_1: middle of [-0.175, 0.785]
-        torso_reference[13] = -0.698   # torso_2: middle of [-1.571, 0.175]
-        torso_reference[14] = 0.305    # torso_3: middle of [-0.175, 0.785]
-        torso_reference[15] = 0.0      # torso_4: stay near 0
-        torso_reference[16] = 0.0      # torso_5: stay near 0
-        
-        # Create posture task with moderate cost for torso regularization
-        torso_task = mink.PostureTask(
-            model=self.model,
-            cost=100.0  # Higher cost to discourage torso movement
-        )
-        torso_task.set_target(torso_reference)
-        tasks.append(torso_task)
-        
-        # 7. General posture task for redundancy resolution and stability
-        # Lower cost for arm joints to allow free movement
+
         posture_task = mink.PostureTask(
             model=self.model,
-            cost=10.0  # Lower cost - mainly for arm redundancy resolution
+            cost=100.0  # Lower cost - mainly for arm redundancy resolution
         )
         # Set reference posture
         reference_qpos = current_qpos.copy()
+        reference_qpos[11] = 0.0      # torso_0: stay near 0
+        reference_qpos[12] = 0.305    # torso_1: middle of [-0.175, 0.785]
+        reference_qpos[13] = -0.698   # torso_2: middle of [-1.571, 0.175]
+        reference_qpos[14] = 0.305    # torso_3: middle of [-0.175, 0.785]
+        reference_qpos[15] = 0.0      # torso_4: stay near 0
+        reference_qpos[16] = 0.0      # torso_5: stay near 0
         posture_task.set_target(reference_qpos)
         tasks.append(posture_task)
+
+        # limits = []
+        # max_velocities = {
+        #     'rby1/': 0.5
+        # }
+        # velocity_limit = mink.VelocityLimit(self.model, max_velocities)
+        # limits.append(velocity_limit)
         
         # Solver parameters
-        dt = 0.1  # Integration timestep
+        dt = 1e-3  # Integration timestep
         solver = "daqp"
         damping = 1e-6
         
-        # IK solving loop
-        success = False
-        for iteration in range(max_iterations):
-            # Compute velocity
-            vel = mink.solve_ik(configuration, tasks, dt, solver, damping)
-            
-            # Limit velocity to prevent large jumps
-            max_joint_vel = 1.0  # rad/s
-            max_base_vel = 0.5   # m/s
-            
-            # Limit base velocities
-            vel[:3] = np.clip(vel[:3], -max_base_vel, max_base_vel)
-            
-            # Limit joint velocities (skip quaternion velocities)
-            vel[7:] = np.clip(vel[7:], -max_joint_vel, max_joint_vel)
-            
-            # Integrate velocity
-            configuration.integrate_inplace(vel, dt)
-            
-            # Normalize quaternion to maintain unit norm (required for valid rotation)
-            quat = configuration.q[3:7]
-            configuration.q[3:7] = quat / np.linalg.norm(quat)
-            
-            # Update MuJoCo data with new configuration
-            self.data.qpos[:] = configuration.q
-            mujoco.mj_forward(self.model, self.data)
-            
-            # Update body-relative targets based on current base position
-            if left_body_relative and left_target_pos is not None:
-                # Update left target to maintain body-relative position
-                current_base_pos = configuration.q[:3]
-                updated_left_target = current_base_pos + left_body_offset
-                # Update the task target
-                for task in tasks:
-                    if hasattr(task, 'frame_name') and task.frame_name == self.left_ee_name:
-                        # Create new target matrix with updated position
-                        if left_target_quat is not None:
-                            target_matrix = self._pose_to_matrix(updated_left_target, left_target_quat)
-                        else:
-                            target_matrix = np.eye(4)
-                            target_matrix[:3, 3] = updated_left_target
-                        task.set_target(mink.SE3.from_matrix(target_matrix))
-                        break
-            
-            if right_body_relative and right_target_pos is not None:
-                # Update right target to maintain body-relative position
-                current_base_pos = configuration.q[:3]
-                updated_right_target = current_base_pos + right_body_offset
-                # Update the task target
-                for task in tasks:
-                    if hasattr(task, 'frame_name') and task.frame_name == self.right_ee_name:
-                        # Create new target matrix with updated position
-                        if right_target_quat is not None:
-                            target_matrix = self._pose_to_matrix(updated_right_target, right_target_quat)
-                        else:
-                            target_matrix = np.eye(4)
-                            target_matrix[:3, 3] = updated_right_target
-                        task.set_target(mink.SE3.from_matrix(target_matrix))
-                        break
-            # Check convergence
-            converged = True
-            errors = {}
-            
-            if left_target_pos is not None:
-                current_left_pos = self._get_site_position(self.left_ee_name, configuration.q)
-                # Use updated target for body-relative constraints
-                check_target = updated_left_target if (left_body_relative and 'updated_left_target' in locals()) else left_target_pos
-                pos_error_left = np.linalg.norm(current_left_pos - check_target)
-                errors["left_position_error"] = pos_error_left
-                if pos_error_left > tolerance:
-                    converged = False
-            
-            if right_target_pos is not None:
-                current_right_pos = self._get_site_position(self.right_ee_name, configuration.q)
-                # Use updated target for body-relative constraints
-                check_target = updated_right_target if (right_body_relative and 'updated_right_target' in locals()) else right_target_pos
-                pos_error_right = np.linalg.norm(current_right_pos - check_target)
-                errors["right_position_error"] = pos_error_right
-                if pos_error_right > tolerance:
-                    converged = False
-            
-            # Check if velocity is small (stuck)
-            vel_norm = np.linalg.norm(vel)
-            if vel_norm < 1e-6 and iteration > 10:
-                break
-            
-            if converged:
-                success = True
-                break
+        vel = mink.solve_ik(configuration, tasks, dt, solver, damping)
+        configuration.integrate_inplace(vel, dt)
         
         # Get solution
         solution_qpos = configuration.q.copy()
@@ -446,18 +374,18 @@ class RBY1WholeBodyIK:
         
         info = {
             "errors": final_errors,
-            "iterations": iteration + 1,
-            "success": success,
+            "iterations": 0,
+            "success": True,
             "base_position": solution_qpos[:3].copy(),
             "stability_margin": stability_margin,
         }
         
         # Restore original qpos to prevent direct joint position changes
         # The IK solution will be applied through actuators, not directly
-        self.data.qpos[:] = current_qpos
-        mujoco.mj_forward(self.model, self.data)
+        # self.data.qpos[:] = current_qpos
+        # mujoco.mj_forward(self.model, self.data)
         
-        return solution_qpos, success, info
+        return solution_qpos, True, info
     
     def _get_site_position(self, site_name: str, qpos: np.ndarray) -> np.ndarray:
         """Get site position for given joint configuration.
