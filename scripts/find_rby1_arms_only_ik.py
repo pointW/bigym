@@ -246,8 +246,51 @@ def main():
             print(f"    {reset_state[i]:.4f}")
     print("])")
     
+    # Check for self-collisions
+    print("\n7. Self-collision check:")
+    print("-" * 60)
+    
+    # Count self-collisions
+    num_contacts = data.ncon
+    self_collision_count = 0
+    collision_pairs = {}
+    collision_depths = {}
+    
+    for i in range(num_contacts):
+        contact = data.contact[i]
+        geom1_id = contact.geom1
+        geom2_id = contact.geom2
+        
+        if geom1_id >= 0 and geom2_id >= 0:
+            body1_id = model.geom_bodyid[geom1_id]
+            body2_id = model.geom_bodyid[geom2_id]
+            body1_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body1_id)
+            body2_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body2_id)
+            
+            if body1_name and body2_name:
+                if 'rby1' in body1_name.lower() and 'rby1' in body2_name.lower():
+                    self_collision_count += 1
+                    pair_key = tuple(sorted([body1_name, body2_name]))
+                    if pair_key not in collision_pairs:
+                        collision_pairs[pair_key] = 0
+                        collision_depths[pair_key] = []
+                    collision_pairs[pair_key] += 1
+                    collision_depths[pair_key].append(-contact.dist * 1000)  # Convert to mm
+    
+    print(f"Self-collisions: {self_collision_count}")
+    if collision_pairs:
+        print("\nCollision pairs with penetration depths:")
+        for pair, count in collision_pairs.items():
+            depths = collision_depths[pair]
+            max_depth = max(depths)
+            avg_depth = sum(depths) / len(depths)
+            print(f"  {pair[0]} <-> {pair[1]}:")
+            print(f"    Contacts: {count}")
+            print(f"    Max penetration: {max_depth:.1f}mm")
+            print(f"    Avg penetration: {avg_depth:.1f}mm")
+    
     # Assessment
-    print("\n7. Assessment:")
+    print("\n8. Assessment:")
     print("-" * 60)
     
     if max(left_pos_error, right_pos_error) < 5.0:
@@ -262,6 +305,11 @@ def main():
     
     if all(abs(v) < 0.001 for v in torso_joints):
         print("✅ Torso joints all at zero - clean posture!")
+    
+    if self_collision_count == 0:
+        print("✅ No self-collisions - collision-free configuration!")
+    else:
+        print(f"⚠️  Still has {self_collision_count} self-collisions")
     
     rby1_env.close()
 

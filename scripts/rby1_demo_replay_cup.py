@@ -9,6 +9,8 @@ from pathlib import Path
 
 from bigym.envs.reach_target import ReachTarget
 from bigym.envs.move_plates import MovePlate
+from bigym.envs.manipulation import FlipCup
+from bigym.envs.test_env import TestEnv
 from bigym.rby1_cartesian_action_mode_whole_body import RBY1CartesianActionModeWholeBody
 from demonstrations.demo import Demo
 from bigym.robots.configs.rby1 import RBY1
@@ -23,20 +25,31 @@ def debug_rby1_demo(headless: bool = False):
     """
     
     # Load first RBY1 demo
-    demo_dir = Path("rby1_cartesian_demos_moveplate")
+    # demo_dir = Path("rby1_cartesian_demos_moveplate")
+    demo_dir = Path("rby1_cartesian_demos_flipcup")
     demo_files = sorted(demo_dir.glob("rby1_cartesian_demo_*.safetensors"))
     
     if not demo_files:
         print("No RBY1 demos found!")
         return
     
-    demo = Demo.from_safetensors(demo_files[0])
+    for i in range(60):
+        demo = Demo.from_safetensors(demo_files[i])
+        if demo.seed == 4202197896:
+            break
     print(f"Loaded demo with seed {demo.seed}, {len(demo.timesteps)} timesteps")
     
     # Create RBY1 environment
-    env = MovePlate(
-        action_mode=RBY1CartesianActionModeWholeBody(direct_mode=False, block_until_reached=True),
-        control_frequency=50,
+    # env = MovePlate(
+    #     action_mode=RBY1CartesianActionModeWholeBody(direct_mode=False, block_until_reached=False, control_frequency=50),
+    #     control_frequency=50,
+    #     render_mode=None if headless else "human",  # GUI when not headless
+    #     robot_cls=RBY1
+    # )
+
+    env = FlipCup(
+        action_mode=RBY1CartesianActionModeWholeBody(direct_mode=False, block_until_reached=False, control_frequency=20),
+        control_frequency=20,
         render_mode=None if headless else "human",  # GUI when not headless
         robot_cls=RBY1
     )
@@ -113,8 +126,6 @@ def debug_rby1_demo(headless: bool = False):
             print(f"  ERROR: {e}")
             break
     
-    if not headless:
-        input("Press Enter to close...")
     env.close()
 
 

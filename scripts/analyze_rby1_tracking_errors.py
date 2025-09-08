@@ -12,6 +12,7 @@ import mujoco
 
 from bigym.envs.move_plates import MovePlate
 from bigym.envs.manipulation import FlipCup
+from bigym.envs.test_env import TestEnv
 from bigym.rby1_cartesian_action_mode_whole_body import RBY1CartesianActionModeWholeBody
 from demonstrations.demo import Demo
 from bigym.robots.configs.rby1 import RBY1
@@ -46,7 +47,8 @@ def analyze_rby1_tracking(demo_idx=0, max_steps=None, save_plots=True, show_plot
     """
     
     # Load RBY1 demo
-    demo_dir = Path("rby1_cartesian_demos_flipcup")
+    demo_dir = Path("rby1_cartesian_demos_moveplate")
+    # demo_dir = Path("rby1_cartesian_demos_flipcup")
     demo_files = sorted(demo_dir.glob("rby1_cartesian_demo_*.safetensors"))
     
     if not demo_files or demo_idx >= len(demo_files):
@@ -60,15 +62,28 @@ def analyze_rby1_tracking(demo_idx=0, max_steps=None, save_plots=True, show_plot
     action_mode = RBY1CartesianActionModeWholeBody(
         direct_mode=False,  # Use standard PD control to see tracking errors
         block_until_reached=False,
-        control_frequency=20
+        control_frequency=50
+        # control_frequency=20
     )
     
-    env = FlipCup(
+    env = TestEnv(
         action_mode=action_mode,
-        control_frequency=20,
+        control_frequency=50,
+        # control_frequency=20,
         render_mode=None,  # Headless for analysis
         robot_cls=RBY1
     )
+
+    # physics = env.unwrapped._mojo.physics
+    # model = physics.model._model
+    # data = physics.data._data
+    
+    # # METHOD 1: Disable ALL collisions globally (including self-collisions)
+    # # This is the most aggressive approach
+    # print("\nMethod 1: Disabling ALL collisions globally...")
+    # model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONTACT
+    # print("✅ All collisions disabled globally")
+    
     
     print(f"Action space shape: {env.action_space.shape}")
     
@@ -93,6 +108,11 @@ def analyze_rby1_tracking(demo_idx=0, max_steps=None, save_plots=True, show_plot
     # Base tracking errors
     base_pos_tracking_errors = []
     base_ori_tracking_errors = []
+    
+    # Joint tracking errors (difference between IK solution and achieved joint values)
+    torso_joint_errors = []  # 6 DOF torso
+    right_arm_joint_errors = []  # 7 DOF right arm
+    left_arm_joint_errors = []  # 7 DOF left arm
     
     # Self-collision tracking
     self_collision_counts = []
@@ -314,6 +334,30 @@ def analyze_rby1_tracking(demo_idx=0, max_steps=None, save_plots=True, show_plot
             base_pos_tracking_error = np.linalg.norm(actual_base_pos[0:2] - target_base_pos[0:2])  # Only X,Y
             base_ori_tracking_error = compute_orientation_error(target_base_quat, actual_base_quat)
             
+            # Compute joint tracking errors (IK solution vs achieved joint values)
+            # RBY1 qpos indices: base(0-6), wheels(7-10), torso(11-16), right_arm(17-23), 
+            # right_gripper(24-31), left_arm(32-38), left_gripper(39-46+)
+            if ik_solution is not None:
+                # Get actual joint values
+                actual_torso_joints = data.qpos[11:17].copy()
+                actual_right_arm_joints = data.qpos[17:24].copy()
+                actual_left_arm_joints = data.qpos[32:39].copy()  # Left arm at 32-38!
+                
+                # Get target joint values from IK solution
+                # IK solution contains full qpos, so use same indices
+                target_torso_joints = ik_solution[11:17] if len(ik_solution) > 17 else actual_torso_joints
+                target_right_arm_joints = ik_solution[17:24] if len(ik_solution) > 24 else actual_right_arm_joints
+                target_left_arm_joints = ik_solution[32:39] if len(ik_solution) > 39 else actual_left_arm_joints
+                
+                # Compute RMS errors for each joint group
+                torso_error = np.sqrt(np.mean((target_torso_joints - actual_torso_joints)**2))
+                right_arm_error = np.sqrt(np.mean((target_right_arm_joints - actual_right_arm_joints)**2))
+                left_arm_error = np.sqrt(np.mean((target_left_arm_joints - actual_left_arm_joints)**2))
+            else:
+                torso_error = 0.0
+                right_arm_error = 0.0
+                left_arm_error = 0.0
+            
             # Store errors
             steps.append(step_idx)
             left_pos_ik_errors.append(left_pos_ik_error * 1000)  # Convert to mm
@@ -328,6 +372,11 @@ def analyze_rby1_tracking(demo_idx=0, max_steps=None, save_plots=True, show_plot
             
             base_pos_tracking_errors.append(base_pos_tracking_error * 1000)  # mm
             base_ori_tracking_errors.append(np.degrees(base_ori_tracking_error))  # degrees
+            
+            # Store joint tracking errors (in radians)
+            torso_joint_errors.append(torso_error)
+            right_arm_joint_errors.append(right_arm_error)
+            left_arm_joint_errors.append(left_arm_error)
             
             self_collision_counts.append(self_collision_count)
             
@@ -355,10 +404,10 @@ def analyze_rby1_tracking(demo_idx=0, max_steps=None, save_plots=True, show_plot
     
     # Create plots
     if len(steps) > 0:
-        fig = plt.figure(figsize=(15, 12), dpi=300)
+        fig = plt.figure(figsize=(16, 16), dpi=300)
         
         # Plot 1: Controller Position tracking errors
-        ax1 = plt.subplot(3, 2, 1)
+        ax1 = plt.subplot(4, 2, 1)
         ax1.plot(steps, left_pos_tracking_errors, 'b-', label='Left EE', linewidth=2)
         ax1.plot(steps, right_pos_tracking_errors, 'r-', label='Right EE', linewidth=2)
         ax1.set_xlabel('Step')
@@ -368,7 +417,7 @@ def analyze_rby1_tracking(demo_idx=0, max_steps=None, save_plots=True, show_plot
         ax1.legend()
         
         # Plot 2: Controller Orientation tracking errors
-        ax2 = plt.subplot(3, 2, 2)
+        ax2 = plt.subplot(4, 2, 2)
         ax2.plot(steps, left_ori_tracking_errors, 'b-', label='Left EE', linewidth=2)
         ax2.plot(steps, right_ori_tracking_errors, 'r-', label='Right EE', linewidth=2)
         ax2.set_xlabel('Step')
@@ -378,7 +427,7 @@ def analyze_rby1_tracking(demo_idx=0, max_steps=None, save_plots=True, show_plot
         ax2.legend()
         
         # Plot 3: IK solver Position errors
-        ax3 = plt.subplot(3, 2, 3)
+        ax3 = plt.subplot(4, 2, 3)
         ax3.plot(steps, left_pos_ik_errors, 'b--', label='Left EE', linewidth=2)
         ax3.plot(steps, right_pos_ik_errors, 'r--', label='Right EE', linewidth=2)
         ax3.set_xlabel('Step')
@@ -388,7 +437,7 @@ def analyze_rby1_tracking(demo_idx=0, max_steps=None, save_plots=True, show_plot
         ax3.legend()
         
         # Plot 4: IK solver Orientation errors
-        ax4 = plt.subplot(3, 2, 4)
+        ax4 = plt.subplot(4, 2, 4)
         ax4.plot(steps, left_ori_ik_errors, 'b--', label='Left EE', linewidth=2)
         ax4.plot(steps, right_ori_ik_errors, 'r--', label='Right EE', linewidth=2)
         ax4.set_xlabel('Step')
@@ -397,40 +446,69 @@ def analyze_rby1_tracking(demo_idx=0, max_steps=None, save_plots=True, show_plot
         ax4.grid(True, alpha=0.3)
         ax4.legend()
         
-        # Plot 5: IK solver metrics
-        ax5 = plt.subplot(3, 2, 5)
+        # Plot 5: Base tracking errors
+        ax5 = plt.subplot(4, 2, 5)
+        ax5.plot(steps, base_pos_tracking_errors, 'g-', label='Position (XY)', linewidth=2)
         ax5_twin = ax5.twinx()
+        ax5_twin.plot(steps, base_ori_tracking_errors, 'm--', label='Orientation', linewidth=1.5)
+        ax5.set_xlabel('Step')
+        ax5.set_ylabel('Position Error (mm)', color='g')
+        ax5_twin.set_ylabel('Orientation Error (degrees)', color='m')
+        ax5.set_title('Base Tracking Error')
+        ax5.tick_params(axis='y', labelcolor='g')
+        ax5_twin.tick_params(axis='y', labelcolor='m')
+        ax5.grid(True, alpha=0.3)
+        
+        # Add legends
+        lines1, labels1 = ax5.get_legend_handles_labels()
+        lines2, labels2 = ax5_twin.get_legend_handles_labels()
+        ax5.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
+        
+        # Plot 6: Joint tracking errors
+        ax6 = plt.subplot(4, 2, 6)
+        ax6.plot(steps, np.array(torso_joint_errors) * 1000, 'c-', label='Torso (6 DOF)', linewidth=2)
+        ax6.plot(steps, np.array(right_arm_joint_errors) * 1000, 'r-', label='Right Arm (7 DOF)', linewidth=2)
+        ax6.plot(steps, np.array(left_arm_joint_errors) * 1000, 'b-', label='Left Arm (7 DOF)', linewidth=2)
+        ax6.set_xlabel('Step')
+        ax6.set_ylabel('RMS Joint Error (mrad)')
+        ax6.set_title('Joint Tracking Error (IK vs Achieved)')
+        ax6.grid(True, alpha=0.3)
+        ax6.legend()
+        
+        # Plot 7: IK solver metrics
+        ax7 = plt.subplot(4, 2, 7)
+        ax7_twin = ax7.twinx()
         
         # Plot iterations on left y-axis
         if any(not np.isnan(x) for x in ik_iterations):
-            ax5.plot(steps, ik_iterations, 'g-', label='Iterations', linewidth=2)
-            ax5.set_ylabel('IK Iterations', color='g')
-            ax5.tick_params(axis='y', labelcolor='g')
+            ax7.plot(steps, ik_iterations, 'g-', label='Iterations', linewidth=2)
+            ax7.set_ylabel('IK Iterations', color='g')
+            ax7.tick_params(axis='y', labelcolor='g')
         
         # Plot success rate on right y-axis  
         if len(ik_success) > 0:
-            ax5_twin.plot(steps, ik_success, 'm--', label='Success', linewidth=1, alpha=0.5)
-            ax5_twin.set_ylabel('IK Success', color='m')
-            ax5_twin.tick_params(axis='y', labelcolor='m')
-            ax5_twin.set_ylim([-0.1, 1.1])
+            ax7_twin.plot(steps, ik_success, 'm--', label='Success', linewidth=1, alpha=0.5)
+            ax7_twin.set_ylabel('IK Success', color='m')
+            ax7_twin.tick_params(axis='y', labelcolor='m')
+            ax7_twin.set_ylim([-0.1, 1.1])
         
-        ax5.set_xlabel('Step')
-        ax5.set_title('IK Solver Performance')
-        ax5.grid(True, alpha=0.3)
+        ax7.set_xlabel('Step')
+        ax7.set_title('IK Solver Performance')
+        ax7.grid(True, alpha=0.3)
         
-        # Plot 6: Combined comparison
-        ax6 = plt.subplot(3, 2, 6)
+        # Plot 8: Combined comparison
+        ax8 = plt.subplot(4, 2, 8)
         # Average position errors
         avg_pos_tracking = [(l + r) / 2 for l, r in zip(left_pos_tracking_errors, right_pos_tracking_errors)]
         avg_pos_ik = [(l + r) / 2 for l, r in zip(left_pos_ik_errors, right_pos_ik_errors)]
         
-        ax6.plot(steps, avg_pos_tracking, 'b-', label='Tracking Error', linewidth=2)
-        ax6.plot(steps, avg_pos_ik, 'r--', label='IK Error', linewidth=2)
-        ax6.set_xlabel('Step')
-        ax6.set_ylabel('Average Position Error (mm)')
-        ax6.set_title('Tracking vs IK Error Comparison (Average of Both Arms)')
-        ax6.grid(True, alpha=0.3)
-        ax6.legend()
+        ax8.plot(steps, avg_pos_tracking, 'b-', label='Tracking Error', linewidth=2)
+        ax8.plot(steps, avg_pos_ik, 'r--', label='IK Error', linewidth=2)
+        ax8.set_xlabel('Step')
+        ax8.set_ylabel('Average Position Error (mm)')
+        ax8.set_title('Tracking vs IK Error Comparison (Average of Both Arms)')
+        ax8.grid(True, alpha=0.3)
+        ax8.legend()
         
         plt.suptitle(f'RBY1 Tracking Analysis - Demo {demo_idx} (Seed: {demo.seed})', fontsize=14)
         plt.tight_layout()
@@ -482,6 +560,14 @@ def analyze_rby1_tracking(demo_idx=0, max_steps=None, save_plots=True, show_plot
                   f"Max={np.max(valid_iterations):.0f}")
             print(f"  Success Rate: {np.mean(ik_success)*100:.1f}%")
         
+        print(f"\nJoint Tracking Errors (IK solution vs Achieved):")
+        print(f"  Torso RMS:     Mean={np.mean(torso_joint_errors)*1000:.2f}mrad, "
+              f"Max={np.max(torso_joint_errors)*1000:.2f}mrad")
+        print(f"  Right Arm RMS: Mean={np.mean(right_arm_joint_errors)*1000:.2f}mrad, "
+              f"Max={np.max(right_arm_joint_errors)*1000:.2f}mrad")
+        print(f"  Left Arm RMS:  Mean={np.mean(left_arm_joint_errors)*1000:.2f}mrad, "
+              f"Max={np.max(left_arm_joint_errors)*1000:.2f}mrad")
+        
         print(f"\nSelf-Collisions:")
         print(f"  Total steps with collisions: {sum(1 for x in self_collision_counts if x > 0)}")
         print(f"  Max collisions in a step: {max(self_collision_counts) if self_collision_counts else 0}")
@@ -498,9 +584,15 @@ def analyze_rby1_tracking(demo_idx=0, max_steps=None, save_plots=True, show_plot
         'right_pos_ik_errors': right_pos_ik_errors,
         'left_ori_ik_errors': left_ori_ik_errors,
         'right_ori_ik_errors': right_ori_ik_errors,
+        'base_pos_tracking_errors': base_pos_tracking_errors,
+        'base_ori_tracking_errors': base_ori_tracking_errors,
+        'torso_joint_errors': torso_joint_errors,
+        'right_arm_joint_errors': right_arm_joint_errors,
+        'left_arm_joint_errors': left_arm_joint_errors,
         'ik_costs': ik_costs,
         'ik_iterations': ik_iterations,
-        'ik_success': ik_success
+        'ik_success': ik_success,
+        'self_collision_counts': self_collision_counts
     }
 
 
