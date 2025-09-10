@@ -116,7 +116,7 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         block_until_reached: bool = False,
         direct_mode: bool = False,
         control_frequency: int = 50,
-        interpolation_frequency: int = 200,
+        interpolation_frequency: int = 50,
         low_level_frequency: int = 1000,
     ):
         """Initialize RBY1 Cartesian action mode with whole-body IK.
@@ -141,8 +141,6 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         self.low_level_frequency = low_level_frequency  # Physics simulation frequency
         self._ik_solver = None
         self._base_target_body_id = None
-        self._last_ik_solution = None  # Store last IK solution to avoid recomputation
-        self._last_ik_info = None  # Store IK solver info for debugging
         
     def bind_robot(self, robot, mojo):
         """Bind action mode to robot."""
@@ -331,13 +329,9 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
                 # IK failed for this waypoint, skip to next or continue with last solution
                 if waypoint == 0:
                     # First waypoint failed, can't continue
-                    self._last_ik_info = info
                     return
                 # Use last successful solution and continue
                 continue
-            
-            self._last_ik_solution = ik_solution
-            self._last_ik_info = info
             
             # Extract base position from IK solution for mocap target
             base_x = ik_solution[0]
@@ -446,20 +440,8 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
                 bound_actuator = self._mojo.physics.bind(actuator)
                 bound_actuator.ctrl = value
         
-        # Reset base_target mocap position to origin
-        if hasattr(self, '_base_target_body_id') and self._base_target_body_id is not None and self._base_target_body_id >= 0:
-            model = self._mojo.physics.model._model
-            data = self._mojo.physics.data._data
-            mocap_id = model.body_mocapid[self._base_target_body_id]
-            if mocap_id >= 0:
-                # Reset mocap to origin
-                data.mocap_pos[mocap_id] = [0, 0, 0]
-                data.mocap_quat[mocap_id] = [1, 0, 0, 0]  # Identity quaternion
-        
         # Clear IK solver to force reinitialization
         self._ik_solver = None
-        self._last_ik_solution = None
-        self._last_ik_info = None
         
     def _initialize_ik_solver(self):
         """Initialize the RBY1 whole-body IK solver."""
@@ -469,15 +451,6 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         
         # Create the RBY1 whole-body IK solver
         self._ik_solver = RBY1WholeBodyIK(model, data)
-    
-    def get_last_ik_solution(self) -> tuple[np.ndarray, dict]:
-        """Get the last IK solution and info for debugging.
-        
-        Returns:
-            Tuple of (ik_solution_qpos, ik_info_dict)
-            Returns (None, None) if no IK has been solved yet
-        """
-        return self._last_ik_solution, self._last_ik_info
     
     def get_current_ee_positions(self) -> tuple[np.ndarray, np.ndarray]:
         """Get current end-effector positions in world frame.

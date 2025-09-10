@@ -1,4 +1,5 @@
 """RBY1 Robot Configuration."""
+import mujoco
 import numpy as np
 from mojo.elements.consts import JointType
 
@@ -178,8 +179,6 @@ class RBY1(Robot):
 
     def __init__(self, action_mode, mojo=None):
         """Initialize RBY1 robot with mocap base control."""
-        # Set desired scale before loading
-        self._model_scale = 1.0
         super().__init__(action_mode, mojo)
         
         # Fix limb_actuators for RBY1 with namespace
@@ -214,6 +213,16 @@ class RBY1(Robot):
                     solimp=[0.99, 0.999, 0.001, 0.5, 2],
                     solref=[0.001, 1],
                 )
+        
+        # Find base_target mocap body if not done yet
+        model = self._mojo.physics.model._model
+        self._base_target_body_id = mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_BODY, "base_target"
+        )
+        if self._base_target_body_id < 0:
+            # Mocap body doesn't exist, we need to handle this
+            print("WARNING: base_target mocap body not found in model")
+            self._base_target_body_id = -1
 
     def _fix_limb_actuators(self):
         """Fix limb actuators for RBY1 with namespace."""
@@ -255,72 +264,17 @@ class RBY1(Robot):
         
         # Sort by expected order
         self._limb_actuators.sort(key=lambda a: expected_names.index(a.name) if a.name in expected_names else 999)
-    
-    def _on_loaded(self, model):
-        """Override to apply scaling before model compilation."""
-        # Apply scaling to the MJCF model before it's compiled
-        if hasattr(self, '_model_scale') and self._model_scale != 1.0:
-            # Scale all body positions
-            for body in model.find_all('body'):
-                if body.pos is not None:
-                    body.pos = [p * self._model_scale for p in body.pos]
-            
-            # Scale all geom sizes (collision geometry)
-            for geom in model.find_all('geom'):
-                if geom.size is not None:
-                    geom.size = [s * self._model_scale for s in geom.size]
-                if hasattr(geom, 'fromto') and geom.fromto is not None:
-                    geom.fromto = [f * self._model_scale for f in geom.fromto]
-                # Also scale mesh if this geom uses one
-                if hasattr(geom, 'mesh') and geom.mesh is not None:
-                    # Geoms with meshes need their mesh scaled
-                    mesh_name = geom.mesh
-                    # Find the corresponding mesh asset and scale it
-                    for mesh in model.find_all('mesh'):
-                        if hasattr(mesh, 'name') and mesh.name == mesh_name:
-                            if mesh.scale is not None:
-                                mesh.scale = [s * self._model_scale for s in mesh.scale]
-                            else:
-                                mesh.scale = [self._model_scale] * 3
-            
-            # Scale all mesh assets directly 
-            for mesh in model.find_all('mesh'):
-                if mesh.scale is not None:
-                    mesh.scale = [s * self._model_scale for s in mesh.scale]
-                else:
-                    mesh.scale = [self._model_scale] * 3
-            
-            # Scale all site positions  
-            for site in model.find_all('site'):
-                if site.pos is not None:
-                    site.pos = [p * self._model_scale for p in site.pos]
-                if site.size is not None:
-                    site.size = [s * self._model_scale for s in site.size]
-            
-            # Scale joint ranges (for position limits)
-            for joint in model.find_all('joint'):
-                if joint.range is not None:
-                    # Only scale positional joints, not angular ones
-                    if hasattr(joint, 'type') and joint.type in ['slide', 'free']:
-                        joint.range = [r * self._model_scale for r in joint.range]
-                if joint.pos is not None:
-                    joint.pos = [p * self._model_scale for p in joint.pos]
-            
-            # Scale inertial properties (optional - MuJoCo often handles this)
-            for body in model.find_all('body'):
-                if hasattr(body, 'inertial') and body.inertial is not None:
-                    inertial = body.inertial
-                    if inertial.pos is not None:
-                        inertial.pos = [p * self._model_scale for p in inertial.pos]
-                    # Mass scales with volume (scale^3)
-                    if inertial.mass is not None:
-                        inertial.mass = inertial.mass * (self._model_scale ** 3)
-                    # Inertia scales with mass * length^2, so scale^5 total
-                    if inertial.diaginertia is not None:
-                        inertial.diaginertia = [i * (self._model_scale ** 5) for i in inertial.diaginertia]
-        
-        # Call parent's _on_loaded to continue normal initialization
-        super()._on_loaded(model)
+
+    def _set_pose(self, position: np.ndarray, orientation: np.ndarray):
+        data = self._mojo.physics.data._data
+        model = self._mojo.physics.model._model
+        mocap_id = model.body_mocapid[self._base_target_body_id]
+        data.qpos[0] = position[0]
+        data.qpos[1] = position[1]
+        data.qpos[3:7] = orientation
+        data.mocap_pos[mocap_id][0] = position[0]
+        data.mocap_pos[mocap_id][1] = position[1]
+        data.mocap_quat[mocap_id] = orientation
     
     @property
     def config(self) -> RobotConfig:
