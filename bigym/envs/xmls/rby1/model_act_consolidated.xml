@@ -20,7 +20,7 @@
     <default class="collision">
       <material shininess="0.5"/>
       <joint range="0 0" armature="0" damping="0"/>
-      <geom contype="1" conaffinity="2" group="3" material="red"/>
+      <geom contype="0" conaffinity="0" group="3" material="red"/>
     </default>
     <default class="in-model-collision">
       <material shininess="0.5"/>
