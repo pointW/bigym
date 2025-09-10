@@ -380,7 +380,7 @@
         <geom class="collision" size="0.08" pos="-0.1 -0.045 0"/>
         <body name="link_torso_1">
           <inertial pos="0.00728955 -0.0172852 0.0691138" quat="0.997768 -0.0453891 0.0382115 -0.0306483" mass="9.72163" diaginertia="0.149421 0.139376 0.0275059"/>
-          <joint name="torso_1" pos="0 0 0" axis="0 1 0" limited="true" range="-1.0472 1.52173"/>
+          <joint name="torso_1" pos="0 0 0" axis="0 1 0" limited="true" range="-0.175 1.52173"/>
           <geom class="visual" material="0,0,0" mesh="LINK_2_0"/>
           <geom class="visual" material="254,254,255" mesh="LINK_2_1"/>
           <geom class="collision" size="0.11"/>
@@ -396,7 +396,8 @@
           <geom class="collision" size="0.08" pos="0 -0.05 0.35"/>
           <body name="link_torso_2" pos="0 0 0.35">
             <inertial pos="0.00653835 -0.0176954 0.0563658" quat="0.99687 -0.052526 0.0433482 -0.0401474" mass="9.21692" diaginertia="0.12242 0.116748 0.0292915"/>
-            <joint name="torso_2" pos="0 0 0" axis="0 1 0" limited="true" range="-2.47837 1.5708"/>
+            <!-- <joint name="torso_2" pos="0 0 0" axis="0 1 0" limited="true" range="-2.47837 1.5708"/> -->
+            <joint name="torso_2" pos="0 0 0" axis="0 1 0" limited="true" range="-2.47837 0.175"/>
             <geom class="visual" material="10,10,10" mesh="LINK_3_0"/>
             <geom class="visual" material="254,254,255" mesh="LINK_3_1"/>
             <geom class="collision" size="0.09"/>
@@ -412,7 +413,7 @@
             <geom class="collision" size="0.06" pos="0.005 -0.05 0.35"/>
             <body name="link_torso_3" pos="0 0 0.35">
               <inertial pos="-0.00574156 -0.0172598 5.61e-05" quat="0.0913806 0.682262 -0.18841 0.700478" mass="4.18679" diaginertia="0.00955618 0.00946572 0.00832635"/>
-              <joint name="torso_3" pos="0 0 0" axis="0 1 0" limited="true" range="-0.785398 1.5708"/>
+              <joint name="torso_3" pos="0 0 0" axis="0 1 0" limited="true" range="-0.175 1.5708"/>
               <geom class="visual" material="10,10,10" mesh="LINK_4"/>
               <body name="link_torso_4">
                 <inertial pos="-0.0909709 5.085e-05 0.0260195" quat="-0.0536434 0.4399 -0.0270045 0.896036" mass="4.45566" diaginertia="0.0255574 0.0255082 0.00942882"/>
