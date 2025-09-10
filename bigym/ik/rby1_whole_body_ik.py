@@ -188,7 +188,7 @@ class RBY1WholeBodyIK:
                 frame_name=self.left_ee_name,
                 frame_type="site",
                 position_cost=10000.0,  # Highest priority
-                orientation_cost=1000.0 if left_target_quat is not None else 0.0,
+                orientation_cost=10000.0 if left_target_quat is not None else 0.0,
                 lm_damping=1e-5,
             )
             
@@ -205,7 +205,7 @@ class RBY1WholeBodyIK:
                 frame_name=self.right_ee_name,
                 frame_type="site",
                 position_cost=10000.0,  # Highest priority
-                orientation_cost=1000.0 if right_target_quat is not None else 0.0,
+                orientation_cost=10000.0 if right_target_quat is not None else 0.0,
                 lm_damping=1e-5,
             )
             
@@ -302,21 +302,30 @@ class RBY1WholeBodyIK:
 
         # 5. Wheel joint constraints (wheels should not move - passive)
         # Create individual joint tasks for each wheel to keep them fixed
-        for wheel_name in self.wheel_joint_names:
-            wheel_joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, wheel_name)
-            if wheel_joint_id >= 0:
-                # Use a posture task with very high cost for this specific joint
-                # This effectively locks the wheel in place
-                wheel_task = mink.PostureTask(
-                    model=self.model,
-                    cost=100000.0,  # Very high cost to prevent wheel movement
-                )
-                wheel_task.set_target(current_qpos)
-                # Note: This will affect all joints but with the high cost only on wheels
-                # The effect on other joints is negligible compared to other tasks
-                tasks.append(wheel_task)
-                break  # One task is sufficient for all wheels due to implementation
+        # for wheel_name in self.wheel_joint_names:
+        #     wheel_joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, wheel_name)
+        #     if wheel_joint_id >= 0:
+        #         # Use a posture task with very high cost for this specific joint
+        #         # This effectively locks the wheel in place
+        #         wheel_task = mink.PostureTask(
+        #             model=self.model,
+        #             cost=100000.0,  # Very high cost to prevent wheel movement
+        #         )
+        #         wheel_task.set_target(current_qpos)
+        #         # Note: This will affect all joints but with the high cost only on wheels
+        #         # The effect on other joints is negligible compared to other tasks
+        #         tasks.append(wheel_task)
+        #         break  # One task is sufficient for all wheels due to implementation
         
+        posture_task = mink.PostureTask(
+            model=self.model,
+            cost=100.0  
+        )
+        # Set reference posture
+        reference_qpos = current_qpos.copy()   # torso_5: stay near 0
+        posture_task.set_target(reference_qpos)
+        tasks.append(posture_task)
+
         # 6. Torso movement penalty task
         # Define preferred ranges for torso joints (in radians)
         # torso_1: -10° to 45° = -0.175 to 0.785 rad
@@ -326,7 +335,7 @@ class RBY1WholeBodyIK:
 
         posture_task = mink.PostureTask(
             model=self.model,
-            cost=100.0  # Lower cost - mainly for arm redundancy resolution
+            cost=50.0  # Lower cost - mainly for arm redundancy resolution
         )
         # Set reference posture
         reference_qpos = current_qpos.copy()
