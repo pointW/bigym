@@ -141,6 +141,8 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         self.low_level_frequency = low_level_frequency  # Physics simulation frequency
         self._ik_solver = None
         self._base_target_body_id = None
+        self._last_ik_solution = None  # Store last IK solution to avoid recomputation
+        self._last_ik_info = None  # Store IK solver info for debugging
         
     def bind_robot(self, robot, mojo):
         """Bind action mode to robot."""
@@ -329,9 +331,13 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
                 # IK failed for this waypoint, skip to next or continue with last solution
                 if waypoint == 0:
                     # First waypoint failed, can't continue
+                    self._last_ik_info = info
                     return
                 # Use last successful solution and continue
                 continue
+            
+            self._last_ik_solution = ik_solution
+            self._last_ik_info = info
             
             # Extract base position from IK solution for mocap target
             base_x = ik_solution[0]
@@ -442,6 +448,8 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         
         # Clear IK solver to force reinitialization
         self._ik_solver = None
+        self._last_ik_solution = None
+        self._last_ik_info = None
         
     def _initialize_ik_solver(self):
         """Initialize the RBY1 whole-body IK solver."""
@@ -452,6 +460,10 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         # Create the RBY1 whole-body IK solver
         self._ik_solver = RBY1WholeBodyIK(model, data)
     
+    def get_last_ik_solution(self) -> tuple[np.ndarray, dict]:
+        """Get the last IK solution and info for debugging."""
+        return self._last_ik_solution, self._last_ik_info
+
     def get_current_ee_positions(self) -> tuple[np.ndarray, np.ndarray]:
         """Get current end-effector positions in world frame.
         
