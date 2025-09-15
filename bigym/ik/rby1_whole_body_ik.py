@@ -348,6 +348,83 @@ class RBY1WholeBodyIK:
         posture_task.set_target(reference_qpos)
         tasks.append(posture_task)
 
+        # 7. Collision avoidance limits using Mink's built-in functionality
+        base_group = {"base_col_0", "base_col_1"}
+
+        torso_0_group = {"torso_0_col_0", "torso_0_col_1"}
+        torso_1_group = {"torso_1_col_0", "torso_1_col_1", "torso_1_col_2", "torso_1_col_3", "torso_1_col_4", "torso_1_col_5", "torso_1_col_6", "torso_1_col_7", "torso_1_col_8", "torso_1_col_9", "torso_1_col_10"}
+        torso_2_group = {"torso_2_col_0", "torso_2_col_1", "torso_2_col_2", "torso_2_col_3", "torso_2_col_4", "torso_2_col_5", "torso_2_col_6", "torso_2_col_7", "torso_2_col_8", "torso_2_col_9", "torso_2_col_10"}
+        torso_4_group = {"torso_4_col_0", "torso_4_col_1", "torso_4_col_2", "torso_4_col_3"}
+        torso_5_group = {"torso_5_col_0", "torso_5_col_1", "torso_5_col_2", "torso_5_col_3", "torso_5_col_4"}
+
+        right_arm_0_group = {"right_arm_0_col_0", "right_arm_0_col_1", "right_arm_0_col_2"}
+        right_arm_1_group = {"right_arm_1_col_0"}
+        right_arm_2_group = {"right_arm_2_col_0", "right_arm_2_col_1", "right_arm_2_col_2", "right_arm_2_col_3", "right_arm_2_col_4", "right_arm_2_col_5", "right_arm_2_col_6", "right_arm_2_col_7"}
+        right_arm_3_group = {"right_arm_3_col_0", "right_arm_3_col_1", "right_arm_3_col_2", "right_arm_3_col_3"}
+        right_arm_4_group = {"right_arm_4_col_0", "right_arm_4_col_1", "right_arm_4_col_2", "right_arm_4_col_3", "right_arm_4_col_4"}
+        right_arm_5_group = {"right_arm_5_col_0", "right_arm_5_col_1", "right_arm_5_col_2"}
+        right_arm_6_group = {"right_arm_6_col_0"}
+        right_arm_7_group = {"right_arm_7_col_0"}
+
+        left_arm_0_group = {"left_arm_0_col_0", "left_arm_0_col_1", "left_arm_0_col_2"}
+        left_arm_1_group = {"left_arm_1_col_0"}
+        left_arm_2_group = {"left_arm_2_col_0", "left_arm_2_col_1", "left_arm_2_col_2", "left_arm_2_col_3", "left_arm_2_col_4", "left_arm_2_col_5", "left_arm_2_col_6", "left_arm_2_col_7"}
+        left_arm_3_group = {"left_arm_3_col_0", "left_arm_3_col_1", "left_arm_3_col_2", "left_arm_3_col_3"}
+        left_arm_4_group = {"left_arm_4_col_0", "left_arm_4_col_1", "left_arm_4_col_2", "left_arm_4_col_3", "left_arm_4_col_4"}
+        left_arm_5_group = {"left_arm_5_col_0", "left_arm_5_col_1", "left_arm_5_col_2"}
+        left_arm_6_group = {"left_arm_6_col_0"}
+        left_arm_7_group = {"left_arm_7_col_0"}
+
+        if self.has_namespace:
+            base_group = {"rby1/" + name for name in base_group}
+            torso_0_group = {"rby1/" + name for name in torso_0_group}
+            torso_1_group = {"rby1/" + name for name in torso_1_group}
+            torso_2_group = {"rby1/" + name for name in torso_2_group}
+            torso_4_group = {"rby1/" + name for name in torso_4_group}
+            torso_5_group = {"rby1/" + name for name in torso_5_group}
+            right_arm_0_group = {"rby1/" + name for name in right_arm_0_group}
+            right_arm_1_group = {"rby1/" + name for name in right_arm_1_group}
+            right_arm_2_group = {"rby1/" + name for name in right_arm_2_group}
+            right_arm_3_group = {"rby1/" + name for name in right_arm_3_group}
+            right_arm_4_group = {"rby1/" + name for name in right_arm_4_group}
+            right_arm_5_group = {"rby1/" + name for name in right_arm_5_group}
+            right_arm_6_group = {"rby1/" + name for name in right_arm_6_group}
+            right_arm_7_group = {"rby1/" + name for name in right_arm_7_group}
+            left_arm_0_group = {"rby1/" + name for name in left_arm_0_group}
+            left_arm_1_group = {"rby1/" + name for name in left_arm_1_group}
+            left_arm_2_group = {"rby1/" + name for name in left_arm_2_group}
+            left_arm_3_group = {"rby1/" + name for name in left_arm_3_group}
+            left_arm_4_group = {"rby1/" + name for name in left_arm_4_group}
+            left_arm_5_group = {"rby1/" + name for name in left_arm_5_group}
+            left_arm_6_group = {"rby1/" + name for name in left_arm_6_group}
+            left_arm_7_group = {"rby1/" + name for name in left_arm_7_group}
+
+        base_torso_group = base_group | torso_0_group | torso_1_group | torso_2_group | torso_4_group | torso_5_group
+        left_arm_group = left_arm_0_group | left_arm_1_group | left_arm_2_group | left_arm_3_group | left_arm_4_group | left_arm_5_group | left_arm_6_group | left_arm_7_group
+        right_arm_group = right_arm_0_group | right_arm_1_group | right_arm_2_group | right_arm_3_group | right_arm_4_group | right_arm_5_group | right_arm_6_group | right_arm_7_group
+
+        # Environment collision group - all robot collision geoms
+        robot_collision_group = base_torso_group | left_arm_group | right_arm_group
+
+        # Get environment collision geoms (non-robot geoms)
+        environment_geom_group = self._get_environment_geoms()
+
+        geom_pairs = [
+            (base_torso_group, left_arm_group),
+            (base_torso_group, right_arm_group),
+            (left_arm_group, right_arm_group),
+            (robot_collision_group, environment_geom_group),
+        ]
+
+        limits = []
+        limit = mink.CollisionAvoidanceLimit(
+            model=self.model,
+            geom_pairs=geom_pairs,
+            minimum_distance_from_collisions=0.01,
+            collision_detection_distance=0.05,
+        )
+        limits.append(limit)
+
         # limits = []
         # max_velocities = {
         #     'rby1/': 0.5
@@ -360,7 +437,8 @@ class RBY1WholeBodyIK:
         solver = "daqp"
         damping = 1e-6
         
-        vel = mink.solve_ik(configuration, tasks, dt, solver, damping)
+        vel = mink.solve_ik(configuration, tasks, dt, solver, damping, limits=limits)
+        # vel = mink.solve_ik(configuration, tasks, dt, solver, damping)
         configuration.integrate_inplace(vel, dt)
         
         # Get solution
@@ -475,3 +553,59 @@ class RBY1WholeBodyIK:
             [2*(x*z - w*y), 2*(y*z + w*x), 1 - 2*(x**2 + y**2)]
         ])
         return R
+    
+    def _get_environment_geoms(self) -> set:
+        """Get all environment collision geoms (non-robot geoms).
+        
+        Returns:
+            Set of environment geom names
+        """
+        environment_geoms = set()
+        
+        # Get all geoms in the model
+        for geom_id in range(self.model.ngeom):
+            # Only check collision geoms (skip visual geoms)
+            contype = self.model.geom_contype[geom_id]
+            conaffinity = self.model.geom_conaffinity[geom_id]
+            
+            # Skip geoms that don't participate in collisions
+            if contype == 0 or conaffinity == 0:
+                continue
+                
+            geom_name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, geom_id)
+
+            if geom_name is None or geom_name == 'floor':
+                continue
+                
+            # Get the body this geom belongs to
+            body_id = self.model.geom_bodyid[geom_id]
+            body_name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY, body_id)
+            
+            if body_name is None:
+                continue
+            
+            # Check if this is a robot body
+            is_robot_body = False
+            if self.has_namespace:
+                # Check if body name starts with robot namespace
+                if body_name.startswith("rby1/"):
+                    is_robot_body = True
+            else:
+                # Check if it's a known robot body name
+                robot_body_names = [
+                    "base", "wheel_fr_link", "wheel_fl_link", "wheel_rr_link", "wheel_rl_link",
+                    "link_torso_0", "link_torso_1", "link_torso_2", "link_torso_3", 
+                    "link_torso_4", "link_torso_5", "link_head_1", "link_head_2",
+                    "link_right_arm_0", "link_right_arm_1", "link_right_arm_2", "link_right_arm_3",
+                    "link_right_arm_4", "link_right_arm_5", "link_right_arm_6", "FT_SENSOR_R", "EE_BODY_R",
+                    "link_left_arm_0", "link_left_arm_1", "link_left_arm_2", "link_left_arm_3",
+                    "link_left_arm_4", "link_left_arm_5", "link_left_arm_6", "FT_SENSOR_L", "EE_BODY_L"
+                ]
+                if body_name in robot_body_names:
+                    is_robot_body = True
+            
+            # If it's not a robot body, it's an environment collision geom
+            if not is_robot_body:
+                environment_geoms.add(geom_name)
+        
+        return environment_geoms
