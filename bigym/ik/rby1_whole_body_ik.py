@@ -6,15 +6,90 @@ while maintaining stability and upright posture constraints.
 import numpy as np
 from typing import Optional, Tuple, Dict
 import mujoco
+import mink
+from mink import Limit, Constraint
 
-try:
-    import mink
-    from mink import SE3
-    MINK_AVAILABLE = True
-except ImportError:
-    MINK_AVAILABLE = False
-    print("Warning: Mink library not available. RBY1 whole-body IK solver will not work.")
+EE_POS_COST = 10000
+EE_ORI_COST = 10000
+# BASE_POS_COST = [100.0, 100.0, 1e5]
+# BASE_ORI_COST = [1e5, 1e5, 100.0]
+TORSO_UPRIGHT_ORI_COST = 1000
+POSTURE_COST_MAIN = 100.0
+POSTURE_COST_TORSO_BIAS = 50.0
+COM_OVER_BASE_POS_COST = 100.0
 
+SAFETY_DISTANCE = 0.01         # m, keep at least this clearance
+INFLUENCE_DISTANCE = 0.05      # m, start repulsion here
+BASE_XY_V_LIMIT = 1 # 1m/s
+BASE_RZ_V_LIMIT = np.pi/2 # 90°/s
+
+JOINT_VEL_LIMITS = {
+    "rby1/torso_0": np.deg2rad(120),
+    "rby1/torso_1": np.deg2rad(120),
+    "rby1/torso_2": np.deg2rad(180),
+    "rby1/torso_3": np.deg2rad(180),
+    "rby1/torso_4": np.deg2rad(180),
+    "rby1/torso_5": np.deg2rad(180),
+
+    "rby1/left_arm_0": np.deg2rad(180),
+    "rby1/left_arm_1": np.deg2rad(180),
+    "rby1/left_arm_2": np.deg2rad(180),
+    "rby1/left_arm_3": np.deg2rad(180),
+    "rby1/left_arm_4": np.deg2rad(360),
+    "rby1/left_arm_5": np.deg2rad(360),
+    "rby1/left_arm_6": np.deg2rad(360),
+
+    "rby1/right_arm_0": np.deg2rad(180),
+    "rby1/right_arm_1": np.deg2rad(180),
+    "rby1/right_arm_2": np.deg2rad(180),
+    "rby1/right_arm_3": np.deg2rad(180),
+    "rby1/right_arm_4": np.deg2rad(360),
+    "rby1/right_arm_5": np.deg2rad(360),
+    "rby1/right_arm_6": np.deg2rad(360),
+}
+class FreeJointVelocityLimit(Limit):
+    model: mujoco.MjModel
+    ang_max: np.ndarray
+    lin_max: np.ndarray
+    indices: np.ndarray | None = None
+    limit:   np.ndarray | None = None
+    P:       np.ndarray | None = None
+
+    def __init__(self, model: mujoco.MjModel,
+                 joint_id: int,
+                 ang_max=(np.inf, np.inf, np.inf),
+                 lin_max=(np.inf, np.inf, np.inf)):
+        object.__setattr__(self, "model", model)
+        ang_max = np.asarray(ang_max, dtype=float).reshape(3)
+        lin_max = np.asarray(lin_max, dtype=float).reshape(3)
+        object.__setattr__(self, "ang_max", ang_max)
+        object.__setattr__(self, "lin_max", lin_max)
+
+        indices = []
+        vmaxs   = []
+        assert model.jnt_type[joint_id] == mujoco.mjtJoint.mjJNT_FREE, "Joint must be free"
+        dof0 = model.jnt_dofadr[joint_id]
+        idx = np.arange(dof0, dof0 + 6, dtype=int)   # [wx, wy, wz, vx, vy, vz]
+        indices.append(idx)
+        vmaxs.append(np.concatenate([lin_max, ang_max], axis=0))
+
+        indices = np.concatenate(indices, axis=0)
+        vmaxs   = np.concatenate(vmaxs,   axis=0)
+
+        P = np.zeros((indices.size, model.nv), dtype=float)
+        P[np.arange(indices.size), indices] = 1.0
+
+        object.__setattr__(self, "indices", indices)
+        object.__setattr__(self, "limit",   vmaxs)
+        object.__setattr__(self, "P",       P)
+
+    def compute_qp_inequalities(self, configuration, dt: float) -> Constraint:
+        if self.P is None or self.P.shape[0] == 0:
+            return Constraint(None, None)
+        vmax_dt = self.limit * float(dt)
+        G = np.vstack(( self.P, -self.P ))
+        h = np.hstack(( vmax_dt,  vmax_dt ))
+        return Constraint(G, h)
 
 class RBY1WholeBodyIK:
     """Whole-body IK solver for RBY1 robot using Mink optimization library.
@@ -38,9 +113,6 @@ class RBY1WholeBodyIK:
             model: MuJoCo model
             data: MuJoCo data
         """
-        if not MINK_AVAILABLE:
-            raise ImportError("Mink library is required for RBY1 whole-body IK solver")
-        
         self.model = model
         self.data = data
         
@@ -67,6 +139,8 @@ class RBY1WholeBodyIK:
             # Wheel link names for stability check
             self.wheel_names = ["link_wheel_fr", "link_wheel_fl", 
                                "link_wheel_rr", "link_wheel_rl"]
+
+        self.environment_geoms = None
     
     def _setup_joint_indices(self):
         """Setup joint indices for different robot parts."""
@@ -126,8 +200,6 @@ class RBY1WholeBodyIK:
         right_target_pos: Optional[np.ndarray] = None,
         right_target_quat: Optional[np.ndarray] = None,
         current_qpos: Optional[np.ndarray] = None,
-        max_iterations: int = 100,  # Not used in current implementation but kept for API compatibility
-        tolerance: float = 1e-3,  # Not used in current implementation but kept for API compatibility
         left_body_relative: bool = False,
         right_body_relative: bool = False,
     ) -> Tuple[np.ndarray, bool, Dict]:
@@ -142,8 +214,6 @@ class RBY1WholeBodyIK:
             right_target_pos: Right end effector target position (3D)
             right_target_quat: Right end effector target orientation (quaternion wxyz)
             current_qpos: Current joint positions (if None, uses data.qpos)
-            max_iterations: Maximum IK iterations
-            tolerance: Convergence tolerance
             left_body_relative: If True, left target is relative to body frame
             right_body_relative: If True, right target is relative to body frame
             
@@ -179,16 +249,17 @@ class RBY1WholeBodyIK:
         # Create configuration from current state
         configuration = mink.Configuration(self.model, current_qpos.copy())
         
-        # Create task list
+        # Create task and limit list
         tasks = []
+        limits = []
         
         # 1. End-effector tasks (highest priority)
         if left_target_pos is not None:
             left_ee_task = mink.FrameTask(
                 frame_name=self.left_ee_name,
                 frame_type="site",
-                position_cost=10000.0,  # Highest priority
-                orientation_cost=10000.0 if left_target_quat is not None else 0.0,
+                position_cost=EE_POS_COST,  # Highest priority
+                orientation_cost=EE_ORI_COST if left_target_quat is not None else 0.0,
                 lm_damping=1e-5,
             )
             
@@ -204,8 +275,8 @@ class RBY1WholeBodyIK:
             right_ee_task = mink.FrameTask(
                 frame_name=self.right_ee_name,
                 frame_type="site",
-                position_cost=10000.0,  # Highest priority
-                orientation_cost=10000.0 if right_target_quat is not None else 0.0,
+                position_cost=EE_POS_COST,  # Highest priority
+                orientation_cost=EE_ORI_COST if right_target_quat is not None else 0.0,
                 lm_damping=1e-5,
             )
             
@@ -252,7 +323,7 @@ class RBY1WholeBodyIK:
             frame_name=self.torso5_name,
             frame_type="body",
             position_cost=0.0,  # Don't constrain position
-            orientation_cost=1000.0,  # STRONG constraint to maintain upright posture
+            orientation_cost=TORSO_UPRIGHT_ORI_COST,  # STRONG constraint to maintain upright posture
             lm_damping=1e-4,
         )
         # Set target to upright orientation (identity rotation)
@@ -261,7 +332,7 @@ class RBY1WholeBodyIK:
         torso_upright_task.set_target(mink.SE3.from_matrix(upright_matrix))
         tasks.append(torso_upright_task)
         
-        # 4. COM stability constraint (medium regularization)
+        # 3. COM stability constraint (medium regularization)
         # This is approximated by keeping torso_5 position within base support polygon
         # We use a relative position task between torso and base
         com_stability_task = mink.RelativeFrameTask(
@@ -269,7 +340,7 @@ class RBY1WholeBodyIK:
             frame_type="body",
             root_name=self.base_name,
             root_type="body",
-            position_cost=100.0,  # Medium cost for stability
+            position_cost=COM_OVER_BASE_POS_COST,  # Medium cost for stability
             orientation_cost=0.0,  # Don't constrain relative orientation
             lm_damping=1e-4,
         )
@@ -279,54 +350,17 @@ class RBY1WholeBodyIK:
         com_stability_task.set_target(mink.SE3.from_matrix(relative_matrix))
         tasks.append(com_stability_task)
         
-        # # 4b. Torso height relative to grippers task
-        # # Encourage torso to be 10cm higher than average gripper height
-        # # Calculate average gripper z position
-        # gripper_z_sum = left_target_pos[2] + right_target_pos[2]        
-        # avg_gripper_z = gripper_z_sum / 2
-        # target_torso_z = avg_gripper_z + 0.3  # 10cm higher
-        
-        # # Create a task for torso height
-        # torso_height_task = mink.FrameTask(
-        #     frame_name=self.torso5_name,
-        #     frame_type="body",
-        #     position_cost=[0.0, 0.0, 100.0],  # Only constrain Z with medium cost
-        #     orientation_cost=0.0,  # Don't constrain orientation
-        #     lm_damping=1e-4,
-        # )
-        # # Set target with desired Z height
-        # torso_height_matrix = np.eye(4)
-        # torso_height_matrix[2, 3] = target_torso_z
-        # torso_height_task.set_target(mink.SE3.from_matrix(torso_height_matrix))
-        # tasks.append(torso_height_task)
-
-        # 5. Wheel joint constraints (wheels should not move - passive)
-        # Create individual joint tasks for each wheel to keep them fixed
-        # for wheel_name in self.wheel_joint_names:
-        #     wheel_joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, wheel_name)
-        #     if wheel_joint_id >= 0:
-        #         # Use a posture task with very high cost for this specific joint
-        #         # This effectively locks the wheel in place
-        #         wheel_task = mink.PostureTask(
-        #             model=self.model,
-        #             cost=100000.0,  # Very high cost to prevent wheel movement
-        #         )
-        #         wheel_task.set_target(current_qpos)
-        #         # Note: This will affect all joints but with the high cost only on wheels
-        #         # The effect on other joints is negligible compared to other tasks
-        #         tasks.append(wheel_task)
-        #         break  # One task is sufficient for all wheels due to implementation
-        
+        # 4. Main posture task
         posture_task = mink.PostureTask(
             model=self.model,
-            cost=100.0  
+            cost=POSTURE_COST_MAIN  
         )
         # Set reference posture
         reference_qpos = current_qpos.copy()   # torso_5: stay near 0
         posture_task.set_target(reference_qpos)
         tasks.append(posture_task)
 
-        # 6. Torso movement penalty task
+        # 5. Torso movement penalty task
         # Define preferred ranges for torso joints (in radians)
         # torso_1: -10° to 45° = -0.175 to 0.785 rad
         # torso_2: -90° to 10° = -1.571 to 0.175 rad  
@@ -335,7 +369,7 @@ class RBY1WholeBodyIK:
 
         posture_task = mink.PostureTask(
             model=self.model,
-            cost=50.0  # Lower cost - mainly for arm redundancy resolution
+            cost=POSTURE_COST_TORSO_BIAS  # Lower cost - mainly for arm redundancy resolution
         )
         # Set reference posture
         reference_qpos = current_qpos.copy()
@@ -348,13 +382,19 @@ class RBY1WholeBodyIK:
         posture_task.set_target(reference_qpos)
         tasks.append(posture_task)
 
-        # 7. Collision avoidance limits using Mink's built-in functionality
-        base_group = {"base_col_0", "base_col_1"}
+        # Limits
+        # 6. Collision avoidance limits using Mink's built-in functionality
+        # base_group = {"base_col_0", "base_col_1"}
 
-        torso_0_group = {"torso_0_col_0", "torso_0_col_1"}
-        torso_1_group = {"torso_1_col_0", "torso_1_col_1", "torso_1_col_2", "torso_1_col_3", "torso_1_col_4", "torso_1_col_5", "torso_1_col_6", "torso_1_col_7", "torso_1_col_8", "torso_1_col_9", "torso_1_col_10"}
-        torso_2_group = {"torso_2_col_0", "torso_2_col_1", "torso_2_col_2", "torso_2_col_3", "torso_2_col_4", "torso_2_col_5", "torso_2_col_6", "torso_2_col_7", "torso_2_col_8", "torso_2_col_9", "torso_2_col_10"}
-        torso_4_group = {"torso_4_col_0", "torso_4_col_1", "torso_4_col_2", "torso_4_col_3"}
+        # torso_0_group = {"torso_0_col_0", "torso_0_col_1"}
+        # torso_1_group = {"torso_1_col_0", "torso_1_col_1", "torso_1_col_2", "torso_1_col_3", "torso_1_col_4", "torso_1_col_5", "torso_1_col_6", "torso_1_col_7", "torso_1_col_8", "torso_1_col_9", "torso_1_col_10"}
+        # torso_2_group = {"torso_2_col_0", "torso_2_col_1", "torso_2_col_2", "torso_2_col_3", "torso_2_col_4", "torso_2_col_5", "torso_2_col_6", "torso_2_col_7", "torso_2_col_8", "torso_2_col_9", "torso_2_col_10"}
+        # torso_4_group = {"torso_4_col_0", "torso_4_col_1", "torso_4_col_2", "torso_4_col_3"}
+        base_group = {}
+        torso_0_group = {}
+        torso_1_group = {}
+        torso_2_group = {}
+        torso_4_group = {}
         torso_5_group = {"torso_5_col_0", "torso_5_col_1", "torso_5_col_2", "torso_5_col_3", "torso_5_col_4"}
 
         right_arm_0_group = {"right_arm_0_col_0", "right_arm_0_col_1", "right_arm_0_col_2"}
@@ -416,34 +456,49 @@ class RBY1WholeBodyIK:
             (robot_collision_group, environment_geom_group),
         ]
 
-        limits = []
-        limit = mink.CollisionAvoidanceLimit(
+        collision_avoidance_limit = mink.CollisionAvoidanceLimit(
             model=self.model,
             geom_pairs=geom_pairs,
-            minimum_distance_from_collisions=0.01,
-            collision_detection_distance=0.05,
+            minimum_distance_from_collisions=SAFETY_DISTANCE,
+            collision_detection_distance=INFLUENCE_DISTANCE,
         )
-        limits.append(limit)
+        limits.append(collision_avoidance_limit)
 
-        # limits = []
-        # max_velocities = {
-        #     'rby1/': 0.5
-        # }
-        # velocity_limit = mink.VelocityLimit(self.model, max_velocities)
-        # limits.append(velocity_limit)
-        
+        # # 7. Configuration limit
+        # limits.append(mink.ConfigurationLimit(self.model))
+
+        # # 8. Joint velocity limit
+        # joint_velocity_limits = copy.deepcopy(JOINT_VEL_LIMITS)
+        # for i in joint_velocity_limits:
+        #     joint_velocity_limits[i] = joint_velocity_limits[i] * 1000 / 50
+        # joint_velocity_limit = mink.VelocityLimit(self.model, joint_velocity_limits)
+        # limits.append(joint_velocity_limit)
+
+        # # 9. Base velocity limit
+        # free_joint_velocity_limit = FreeJointVelocityLimit(
+        #     self.model, 
+        #     0, 
+        #     ang_max=[0, 0, BASE_RZ_V_LIMIT * 1000 / 50], 
+        #     lin_max=[BASE_XY_V_LIMIT * 1000 / 50, BASE_XY_V_LIMIT * 1000 / 50, 0]
+        # )
+        # limits.append(free_joint_velocity_limit)
+
         # Solver parameters
         dt = 1e-3  # Integration timestep
         solver = "daqp"
         damping = 1e-6
         
-        vel = mink.solve_ik(configuration, tasks, dt, solver, damping, limits=limits)
-        # vel = mink.solve_ik(configuration, tasks, dt, solver, damping)
-        configuration.integrate_inplace(vel, dt)
-        
-        # Get solution
-        solution_qpos = configuration.q.copy()
-        
+        try:
+            vel = mink.solve_ik(configuration, tasks, dt, solver, damping, limits=limits)
+            # vel = mink.solve_ik(configuration, tasks, dt, solver, damping)
+            configuration.integrate_inplace(vel, dt)
+            # Get solution
+            solution_qpos = configuration.q.copy()
+            success = True
+        except mink.NoSolutionFound:
+            solution_qpos = current_qpos.copy()
+            success = False
+
         # Final error check
         final_errors = {}
         if left_target_pos is not None:
@@ -462,7 +517,7 @@ class RBY1WholeBodyIK:
         info = {
             "errors": final_errors,
             "iterations": 0,
-            "success": True,
+            "success": success,
             "base_position": solution_qpos[:3].copy(),
             "stability_margin": stability_margin,
         }
@@ -560,52 +615,55 @@ class RBY1WholeBodyIK:
         Returns:
             Set of environment geom names
         """
-        environment_geoms = set()
-        
-        # Get all geoms in the model
-        for geom_id in range(self.model.ngeom):
-            # Only check collision geoms (skip visual geoms)
-            contype = self.model.geom_contype[geom_id]
-            conaffinity = self.model.geom_conaffinity[geom_id]
+        if self.environment_geoms is None:
+            environment_geoms = set()
             
-            # Skip geoms that don't participate in collisions
-            if contype == 0 or conaffinity == 0:
-                continue
+            # Get all geoms in the model
+            for geom_id in range(self.model.ngeom):
+                # Only check collision geoms (skip visual geoms)
+                contype = self.model.geom_contype[geom_id]
+                conaffinity = self.model.geom_conaffinity[geom_id]
                 
-            geom_name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, geom_id)
+                # Skip geoms that don't participate in collisions
+                if contype == 0 or conaffinity == 0:
+                    continue
+                    
+                geom_name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, geom_id)
 
-            if geom_name is None or geom_name == 'floor':
-                continue
+                if geom_name is None or geom_name == 'floor':
+                    continue
+                    
+                # Get the body this geom belongs to
+                body_id = self.model.geom_bodyid[geom_id]
+                body_name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY, body_id)
                 
-            # Get the body this geom belongs to
-            body_id = self.model.geom_bodyid[geom_id]
-            body_name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY, body_id)
+                if body_name is None:
+                    continue
+                
+                # Check if this is a robot body
+                is_robot_body = False
+                if self.has_namespace:
+                    # Check if body name starts with robot namespace
+                    if body_name.startswith("rby1/"):
+                        is_robot_body = True
+                else:
+                    # Check if it's a known robot body name
+                    robot_body_names = [
+                        "base", "wheel_fr_link", "wheel_fl_link", "wheel_rr_link", "wheel_rl_link",
+                        "link_torso_0", "link_torso_1", "link_torso_2", "link_torso_3", 
+                        "link_torso_4", "link_torso_5", "link_head_1", "link_head_2",
+                        "link_right_arm_0", "link_right_arm_1", "link_right_arm_2", "link_right_arm_3",
+                        "link_right_arm_4", "link_right_arm_5", "link_right_arm_6", "FT_SENSOR_R", "EE_BODY_R",
+                        "link_left_arm_0", "link_left_arm_1", "link_left_arm_2", "link_left_arm_3",
+                        "link_left_arm_4", "link_left_arm_5", "link_left_arm_6", "FT_SENSOR_L", "EE_BODY_L"
+                    ]
+                    if body_name in robot_body_names:
+                        is_robot_body = True
+                
+                # If it's not a robot body, it's an environment collision geom
+                if not is_robot_body:
+                    environment_geoms.add(geom_name)
             
-            if body_name is None:
-                continue
-            
-            # Check if this is a robot body
-            is_robot_body = False
-            if self.has_namespace:
-                # Check if body name starts with robot namespace
-                if body_name.startswith("rby1/"):
-                    is_robot_body = True
-            else:
-                # Check if it's a known robot body name
-                robot_body_names = [
-                    "base", "wheel_fr_link", "wheel_fl_link", "wheel_rr_link", "wheel_rl_link",
-                    "link_torso_0", "link_torso_1", "link_torso_2", "link_torso_3", 
-                    "link_torso_4", "link_torso_5", "link_head_1", "link_head_2",
-                    "link_right_arm_0", "link_right_arm_1", "link_right_arm_2", "link_right_arm_3",
-                    "link_right_arm_4", "link_right_arm_5", "link_right_arm_6", "FT_SENSOR_R", "EE_BODY_R",
-                    "link_left_arm_0", "link_left_arm_1", "link_left_arm_2", "link_left_arm_3",
-                    "link_left_arm_4", "link_left_arm_5", "link_left_arm_6", "FT_SENSOR_L", "EE_BODY_L"
-                ]
-                if body_name in robot_body_names:
-                    is_robot_body = True
-            
-            # If it's not a robot body, it's an environment collision geom
-            if not is_robot_body:
-                environment_geoms.add(geom_name)
-        
-        return environment_geoms
+            self.environment_geoms = environment_geoms
+
+        return self.environment_geoms

@@ -346,8 +346,8 @@
       <geom class="visual" material="191,191,191" mesh="base_5"/>
       <geom class="visual" material="69,69,69" mesh="base_6"/>
       <geom class="visual" material="70,70,70" mesh="base_7"/>
-      <geom class="collision" contype="0" conaffinity="0" name="base_col_0" size="0.34 0.3 0.1" pos="-0.01 0 0.1" type="box"/>
-      <geom class="collision" name="base_col_1" size="0.09 0.08 0.09" pos="-0.24 0 0.295" type="box"/>
+      <!-- <geom class="collision" contype="0" conaffinity="0" name="base_col_0" size="0.34 0.3 0.1" pos="-0.01 0 0.1" type="box"/>
+      <geom class="collision" name="base_col_1" size="0.09 0.08 0.09" pos="-0.24 0 0.295" type="box"/> -->
       <body name="wheel_fr_link" pos="0.243 -0.245 0.076">
         <inertial pos="-0.00010511 0.0009458 0" quat="0.707046 0 0 0.707168" mass="2.5441" diaginertia="0.00616429 0.00470985 0.00470754"/>
         <joint name="wheel_fr" pos="0 0 0" axis="0 1 0" limited="true" range="-3.1415 3.1415"/>
@@ -372,14 +372,14 @@
         <inertial pos="-0.0884841 0.00021367 4.6e-07" quat="0.443798 0.550483 -0.443815 0.55049" mass="2.24282" diaginertia="0.0189253 0.0143368 0.00985172"/>
         <joint name="torso_0" pos="0 0 0" axis="1 0 0" limited="true" range="-0.349066 0.349066"/>
         <geom class="visual" material="254,254,255" mesh="LINK_1"/>
-        <geom class="collision" name="torso_0_col_0" size="0.08" pos="-0.1 0.045 0"/>
-        <geom class="collision" name="torso_0_col_1" size="0.08" pos="-0.1 -0.045 0"/>
+        <!-- <geom class="collision" name="torso_0_col_0" size="0.08" pos="-0.1 0.045 0"/>
+        <geom class="collision" name="torso_0_col_1" size="0.08" pos="-0.1 -0.045 0"/> -->
         <body name="link_torso_1">
           <inertial pos="0.00728955 -0.0172852 0.0691138" quat="0.997768 -0.0453891 0.0382115 -0.0306483" mass="9.72163" diaginertia="0.149421 0.139376 0.0275059"/>
           <joint name="torso_1" pos="0 0 0" axis="0 1 0" limited="true" range="-0.175 1.52173"/>
           <geom class="visual" material="0,0,0" mesh="LINK_2_0"/>
           <geom class="visual" material="254,254,255" mesh="LINK_2_1"/>
-          <geom class="collision" name="torso_1_col_0" size="0.11"/>
+          <!-- <geom class="collision" name="torso_1_col_0" size="0.11"/>
           <geom class="collision" name="torso_1_col_1" size="0.085" pos="0.015 0 0.08"/>
           <geom class="collision" name="torso_1_col_2" size="0.07" pos="0.025 0.03 0.15"/>
           <geom class="collision" name="torso_1_col_3" size="0.07" pos="0.025 -0.03 0.15"/>
@@ -389,14 +389,14 @@
           <geom class="collision" name="torso_1_col_7" size="0.06" pos="0.03 0 0.28"/>
           <geom class="collision" name="torso_1_col_8" size="0.06" pos="0.03 -0.05 0.28"/>
           <geom class="collision" name="torso_1_col_9" size="0.08" pos="0 0.05 0.35"/>
-          <geom class="collision" name="torso_1_col_10" size="0.08" pos="0 -0.05 0.35"/>
+          <geom class="collision" name="torso_1_col_10" size="0.08" pos="0 -0.05 0.35"/> -->
           <body name="link_torso_2" pos="0 0 0.35">
             <inertial pos="0.00653835 -0.0176954 0.0563658" quat="0.99687 -0.052526 0.0433482 -0.0401474" mass="9.21692" diaginertia="0.12242 0.116748 0.0292915"/>
             <!-- <joint name="torso_2" pos="0 0 0" axis="0 1 0" limited="true" range="-2.47837 1.5708"/> -->
             <joint name="torso_2" pos="0 0 0" axis="0 1 0" limited="true" range="-2.47837 0.175"/>
             <geom class="visual" material="10,10,10" mesh="LINK_3_0"/>
             <geom class="visual" material="254,254,255" mesh="LINK_3_1"/>
-            <geom class="collision" name="torso_2_col_0" size="0.09"/>
+            <!-- <geom class="collision" name="torso_2_col_0" size="0.09"/>
             <geom class="collision" name="torso_2_col_1" size="0.085" pos="0.015 0 0.08"/>
             <geom class="collision" name="torso_2_col_2" size="0.07" pos="0.025 0.03 0.15"/>
             <geom class="collision" name="torso_2_col_3" size="0.07" pos="0.025 -0.03 0.15"/>
@@ -406,7 +406,7 @@
             <geom class="collision" name="torso_2_col_7" size="0.06" pos="0.03 0 0.28"/>
             <geom class="collision" name="torso_2_col_8" size="0.06" pos="0.03 -0.05 0.28"/>
             <geom class="collision" name="torso_2_col_9" size="0.06" pos="0.005 0.05 0.35"/>
-            <geom class="collision" name="torso_2_col_10" size="0.06" pos="0.005 -0.05 0.35"/>
+            <geom class="collision" name="torso_2_col_10" size="0.06" pos="0.005 -0.05 0.35"/> -->
             <body name="link_torso_3" pos="0 0 0.35">
               <inertial pos="-0.00574156 -0.0172598 5.61e-05" quat="0.0913806 0.682262 -0.18841 0.700478" mass="4.18679" diaginertia="0.00955618 0.00946572 0.00832635"/>
               <joint name="torso_3" pos="0 0 0" axis="0 1 0" limited="true" range="-0.175 1.5708"/>
@@ -415,10 +415,10 @@
                 <inertial pos="-0.0909709 5.085e-05 0.0260195" quat="-0.0536434 0.4399 -0.0270045 0.896036" mass="4.45566" diaginertia="0.0255574 0.0255082 0.00942882"/>
                 <joint name="torso_4" pos="0 0 0" axis="1 0 0" limited="true" range="-0.523599 0.523599"/>
                 <geom class="visual" material="10,10,10" mesh="LINK_5"/>
-                <geom class="collision" name="torso_4_col_0" size="0.105" pos="0 0 0.03"/>
+                <!-- <geom class="collision" name="torso_4_col_0" size="0.105" pos="0 0 0.03"/>
                 <geom class="collision" name="torso_4_col_1" size="0.1" pos="-0.05 0 0.03"/>
                 <geom class="collision" name="torso_4_col_2" size="0.1" pos="-0.1 0 0.03"/>
-                <geom class="collision" name="torso_4_col_3" size="0.07" pos="-0.17 0 0"/>
+                <geom class="collision" name="torso_4_col_3" size="0.07" pos="-0.17 0 0"/> -->
                 <body name="link_torso_5" pos="0 0 0.309427">
                   <inertial pos="-0.0132199 0.000254676 -0.0318761" quat="0.998675 -0.00438307 -0.0510462 0.00477378" mass="12.6659" diaginertia="0.21618 0.167212 0.132309"/>
                   <joint name="torso_5" pos="0 0 0" axis="0 0 1" limited="true" range="-1.5708 1.5708"/>
