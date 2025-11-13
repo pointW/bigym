@@ -13,9 +13,10 @@ from mojo import Mojo
 from mojo.elements import Geom, Camera
 
 from bigym.action_modes import ActionMode
-from bigym.const import WORLD_MODEL
+from bigym.const import WORLD_MODEL, HandSide
 from bigym.envs.props.preset import Preset
 from bigym.robots.configs.h1 import H1
+from bigym.robots.configs.rby1 import RBY1
 from bigym.robots.robot import Robot
 from bigym.bigym_renderer import BiGymRenderer
 from bigym.utils.callables_cache import CallablesCache
@@ -286,6 +287,35 @@ class BiGymEnv(gym.Env):
                         ),
                     }
                 )
+            if isinstance(self.robot, RBY1):
+                obs_dict.update(
+                    {
+                        "left_ee_pos": spaces.Box(
+                            low=-np.inf,
+                            high=np.inf,
+                            shape=(3,),
+                            dtype=np.float32,
+                        ),
+                        "left_ee_quat": spaces.Box(
+                            low=-1.0,
+                            high=1.0,
+                            shape=(4,),
+                            dtype=np.float32,
+                        ),
+                        "right_ee_pos": spaces.Box(
+                            low=-np.inf,
+                            high=np.inf,
+                            shape=(3,),
+                            dtype=np.float32,
+                        ),
+                        "right_ee_quat": spaces.Box(
+                            low=-1.0,
+                            high=1.0,
+                            shape=(4,),
+                            dtype=np.float32,
+                        ),
+                    }
+                )
         if self._use_pixels:
             for camera in self.observation_config.cameras:
                 if camera.rgb:
@@ -345,7 +375,25 @@ class BiGymEnv(gym.Env):
             obs["proprioception_floating_base_actions"] = np.array(
                 self.robot.floating_base.get_accumulated_actions
             ).astype(np.float32)
+        if isinstance(self.robot, RBY1):
+            obs |= self._get_rby1_end_effector_obs()
         return obs
+
+    def _get_rby1_end_effector_obs(self) -> dict[str, np.ndarray]:
+        """Collect wrist pose data for both end effectors (MuJoCo quat order is wxyz)."""
+        ee_obs: dict[str, np.ndarray] = {}
+        for side, prefix in ((HandSide.LEFT, "left"), (HandSide.RIGHT, "right")):
+            gripper = self.robot.grippers.get(side)
+            if gripper is None:
+                continue
+            ee_obs[f"{prefix}_ee_pos"] = np.array(
+                gripper.wrist_position, dtype=np.float32
+            )
+            site_bind = self._mojo.physics.bind(gripper.wrist_site.mjcf)
+            quat = np.zeros(4, dtype=np.float64)
+            mujoco.mju_mat2Quat(quat, site_bind.xmat)
+            ee_obs[f"{prefix}_ee_quat"] = quat.astype(np.float32)
+        return ee_obs
 
     def _get_visual_obs(self) -> dict[str, Any]:
         """Get the visual observation."""
