@@ -154,7 +154,7 @@ RBY1_CONFIG = RobotConfig(
     gripper=ROBOTIQ_2F85,  # Using H1 grippers for consistency
     arms={HandSide.LEFT: RBY1_LEFT_ARM, HandSide.RIGHT: RBY1_RIGHT_ARM},
     actuators=RBY1_ACTUATORS,
-    cameras=[],  # Will add cameras as needed
+    cameras=["head", "left_wrist", "right_wrist"],
     namespaces_to_remove=[],
 )
 
@@ -169,7 +169,7 @@ RBY1_FINE_MANIPULATION_CONFIG = RobotConfig(
     gripper=ROBOTIQ_2F85_FINE_MANIPULATION,
     arms={HandSide.LEFT: RBY1_LEFT_ARM, HandSide.RIGHT: RBY1_RIGHT_ARM},
     actuators=RBY1_ACTUATORS,
-    cameras=[],
+    cameras=["head", "left_wrist", "right_wrist"],
     namespaces_to_remove=[],
 )
 
