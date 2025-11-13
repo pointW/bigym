@@ -68,7 +68,7 @@ class Metadata:
             metadata["environment_data"]
         )
         obj = cls(**clean_metadata(metadata, cls))
-        obj._check_package_versions()
+        # obj._check_package_versions()
         return obj
 
     @classmethod

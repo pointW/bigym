@@ -323,10 +323,8 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
                 left_body_relative=False,  # Always use world frame
                 right_body_relative=False,  # Always use world frame
                 current_qpos=current_qpos,
-                max_iterations=100,
-                tolerance=0.001,
             )
-            
+
             if not success:
                 # IK failed for this waypoint, skip to next or continue with last solution
                 if waypoint == 0:
@@ -447,7 +445,7 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
                 bound_actuator.ctrl = value
         
         # Clear IK solver to force reinitialization
-        self._ik_solver = None
+        # self._ik_solver = None
         self._last_ik_solution = None
         self._last_ik_info = None
         
