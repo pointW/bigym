@@ -47,6 +47,7 @@ JOINT_VEL_LIMITS = {
     "rby1/right_arm_5": np.deg2rad(360),
     "rby1/right_arm_6": np.deg2rad(360),
 }
+
 class FreeJointVelocityLimit(Limit):
     model: mujoco.MjModel
     ang_max: np.ndarray
@@ -150,7 +151,12 @@ class RBY1WholeBodyIK:
         self.base_quat_indices = [3, 4, 5, 6]  # Quaternion (w, x, y, z)
         
         # Wheel joints (not modified by IK)
-        self.wheel_joint_names = ["wheel_fr", "wheel_fl", "wheel_rr", "wheel_rl"]
+        self.wheel_joint_names = [
+            "rby1/wheel_fr",
+            "rby1/wheel_fl",
+            "rby1/wheel_rr",
+            "rby1/wheel_rl",
+        ]
         self.wheel_qpos_indices = []
         for name in self.wheel_joint_names:
             joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
@@ -159,7 +165,7 @@ class RBY1WholeBodyIK:
                 self.wheel_qpos_indices.append(qpos_adr)
         
         # Torso joints (controlled by IK)
-        self.torso_joint_names = [f"torso_{i}" for i in range(6)]
+        self.torso_joint_names = [f"rby1/torso_{i}" for i in range(6)]
         self.torso_qpos_indices = []
         for name in self.torso_joint_names:
             joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
@@ -168,7 +174,7 @@ class RBY1WholeBodyIK:
                 self.torso_qpos_indices.append(qpos_adr)
         
         # Left arm joints (controlled by IK)
-        self.left_arm_joint_names = [f"left_arm_{i}" for i in range(7)]
+        self.left_arm_joint_names = [f"rby1/left_arm_{i}" for i in range(7)]
         self.left_arm_qpos_indices = []
         for name in self.left_arm_joint_names:
             joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
@@ -177,13 +183,24 @@ class RBY1WholeBodyIK:
                 self.left_arm_qpos_indices.append(qpos_adr)
         
         # Right arm joints (controlled by IK)
-        self.right_arm_joint_names = [f"right_arm_{i}" for i in range(7)]
+        self.right_arm_joint_names = [f"rby1/right_arm_{i}" for i in range(7)]
         self.right_arm_qpos_indices = []
         for name in self.right_arm_joint_names:
             joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
             if joint_id >= 0:
                 qpos_adr = self.model.jnt_qposadr[joint_id]
                 self.right_arm_qpos_indices.append(qpos_adr)
+
+        # Head joints
+        self.head_joint_names = [f"rby1/head_{i}" for i in range(2)]
+        self.head_qpos_indices = []
+        self.head_dof_indices = []
+        for name in self.head_joint_names:
+            joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
+            qpos_adr = self.model.jnt_qposadr[joint_id]
+            self.head_qpos_indices.append(qpos_adr)
+            dof_adr = self.model.jnt_dofadr[joint_id]
+            self.head_dof_indices.append(dof_adr)
         
         # All IK-controlled indices (including base now)
         self.ik_controlled_indices = (
@@ -293,8 +310,8 @@ class RBY1WholeBodyIK:
         base_ground_task = mink.FrameTask(
             frame_name=self.base_name,
             frame_type="body",
-            position_cost=[100.0, 100.0, 100000.0],  # Allow X,Y movement, strongly constrain Z
-            orientation_cost=[100000.0, 100000.0, 100.0],  # Constrain roll/pitch, allow yaw
+            position_cost=[0.0, 0.0, 100000.0],  # Allow X,Y movement, strongly constrain Z
+            orientation_cost=[100000.0, 100000.0, 0.0],  # Constrain roll/pitch, allow yaw
             lm_damping=1e-6,
         )
         # Set target to current X,Y but Z=0 and upright orientation with current yaw
@@ -323,7 +340,7 @@ class RBY1WholeBodyIK:
             frame_name=self.torso5_name,
             frame_type="body",
             position_cost=0.0,  # Don't constrain position
-            orientation_cost=TORSO_UPRIGHT_ORI_COST,  # STRONG constraint to maintain upright posture
+            orientation_cost=[TORSO_UPRIGHT_ORI_COST, TORSO_UPRIGHT_ORI_COST, 0],  # STRONG constraint to maintain upright posture
             lm_damping=1e-4,
         )
         # Set target to upright orientation (identity rotation)
