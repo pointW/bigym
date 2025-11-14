@@ -10,14 +10,18 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 from pathlib import Path
-from typing import List, Type, Optional, Dict, Any
+from typing import List, Type, Optional, Dict, Any, Tuple
 import importlib
 from tqdm import tqdm
 from pyquaternion import Quaternion
 
 from bigym.action_modes import JointPositionActionMode
 from bigym.utils.observation_config import ObservationConfig, CameraConfig
-from bigym.cartesian_action_mode import CartesianActionMode, Pose, rotation_matrix_to_6d
+from bigym.rby1_cartesian_action_mode_whole_body import (
+    RBY1CartesianActionModeWholeBody,
+    rotation_matrix_to_6d,
+)
+from vr.ik.h1_upper_body_ik import Pose
 from bigym.const import HandSide
 from demonstrations.demo_store import DemoStore
 from demonstrations.utils import Metadata
@@ -46,6 +50,7 @@ def detect_floating_dofs_from_demos(env_name: str) -> List[PelvisDof]:
         'StoreKitchenware',  # Storing items at different heights
         'GroceriesStoreLower', 'GroceriesStoreUpper',  # Different height storage
         'TakeCups', 'PutCups',  # Cup manipulation
+        'DishwasherOpen', 'DishwasherClose', 'DishwasherOpenTrays', 'DishwasherCloseTrays', 'DishwasherLoadCups', 'DishwasherLoadCutlery', 'DishwasherLoadPlates', 'DishwasherUnloadCups', 'DishwasherUnloadCutlery', 'DishwasherUnloadPlates', 'DishwasherUnloadPlatesLong',
     }
     
     # Default to 3 DOF (X, Y, RZ) for most tasks
@@ -107,7 +112,7 @@ def get_environment_class(env_name: str) -> Type:
         'StoreKitchenware': 'bigym.envs.storage',
         'GroceriesStoreLower': 'bigym.envs.storage',
         'GroceriesStoreUpper': 'bigym.envs.storage',
-        'TakeCups': 'bigym.envs.storage',
+        'TakeCups': 'bigym.envs.pick_and_place',
         'PutCups': 'bigym.envs.storage',
         
         # Cupboard/Drawer tasks
@@ -190,7 +195,7 @@ def convert_h1_demo_to_rby1_cartesian(
     control_frequency: int = 50,
     render_mode: Optional[str] = None,
     robot_type: str = "rby1"
-) -> Demo:
+) -> Tuple[Demo, bool]:
     """Convert a single H1 joint demo to RBY1 Cartesian demo.
     
     Args:
@@ -203,11 +208,10 @@ def convert_h1_demo_to_rby1_cartesian(
         robot_type: Target robot type (should be "rby1")
         
     Returns:
-        New demo with RBY1 Cartesian actions
+        Tuple of (converted demo, success flag from RBY1 rollout)
     """
-    # Get the actions and observations from the original demo
+    # Get the actions from the original demo
     joint_actions = np.array([step.executed_action for step in original_demo.timesteps])
-    observations = [step.observation for step in original_demo.timesteps]
     
     cartesian_actions = []
     
@@ -276,35 +280,51 @@ def convert_h1_demo_to_rby1_cartesian(
     
     h1_env.close()
     
-    # Create new demo with RBY1 Cartesian actions
-    timesteps = []
-    for i, (cartesian_action, obs) in enumerate(zip(cartesian_actions, observations)):
-        original_step = original_demo.timesteps[i]
-        timestep = DemoStep(
-            observation=obs,
-            reward=original_step.reward,
-            termination=original_step.termination,
-            truncation=original_step.truncation,
-            info=original_step.info.copy(),
-            action=cartesian_action
-        )
-        timesteps.append(timestep)
-    
-    # Create RBY1 Cartesian environment for metadata
-    # Use empty camera config to avoid camera name conflicts
+    # Create RBY1 environment to actually execute the Cartesian actions
     rby1_env = env_class(
-        action_mode=CartesianActionMode(floating_base=False),  # RBY1 whole-body IK handles base
+        action_mode=RBY1CartesianActionModeWholeBody(
+            block_until_reached=False,
+            direct_mode=False,
+            control_frequency=control_frequency,
+        ),
         control_frequency=control_frequency,
-        observation_config=ObservationConfig(cameras=[]),  # Empty cameras to avoid conflicts
-        render_mode=None,
-        robot_cls=RBY1  # Use RBY1 robot class for target metadata
+        observation_config=ObservationConfig(cameras=camera_configs),
+        render_mode=render_mode,
+        robot_cls=RBY1,
     )
+    
+    rby1_env.reset(seed=original_demo.seed)
+    
+    timesteps: list[DemoStep] = []
+    last_info: Dict[str, Any] = {}
+    for cartesian_action in cartesian_actions:
+        clipped_action = np.clip(
+            cartesian_action,
+            rby1_env.action_space.low,
+            rby1_env.action_space.high,
+        )
+        obs, reward, terminated, truncated, info = rby1_env.step(clipped_action)
+        info = info or {}
+        last_info = info
+        timesteps.append(
+            DemoStep(
+                observation=obs,
+                reward=reward,
+                termination=terminated,
+                truncation=truncated,
+                info=info.copy(),
+                action=clipped_action,
+            )
+        )
+        if terminated or truncated:
+            break
     
     rby1_metadata = Metadata.from_env(rby1_env)
     rby1_metadata.seed = original_demo.seed
+    success = bool(last_info.get("task_success", False)) if last_info else bool(rby1_env.success)
     rby1_env.close()
     
-    return Demo(metadata=rby1_metadata, timesteps=timesteps)
+    return Demo(metadata=rby1_metadata, timesteps=timesteps), success
 
 
 def convert_h1_demos_batch(
@@ -383,11 +403,12 @@ def convert_h1_demos_batch(
     # Convert each demo
     rby1_cartesian_demos = []
     
+    success_idx = 0
     for i, original_demo in enumerate(original_demos):
         print(f"\nConverting H1 demo {i+1}/{len(original_demos)} to RBY1 Cartesian...")
         
         try:
-            rby1_demo = convert_h1_demo_to_rby1_cartesian(
+            rby1_demo, success = convert_h1_demo_to_rby1_cartesian(
                 original_demo,
                 env_class,
                 env_name,
@@ -396,15 +417,21 @@ def convert_h1_demos_batch(
                 render_mode,
                 robot_type
             )
+            status_msg = "SUCCESS" if success else "FAILURE"
+            print(f"RBY1 rollout result: {status_msg}")
+            if not success:
+                print("Skipping save because the converted demo did not succeed.")
+                continue
             rby1_cartesian_demos.append(rby1_demo)
             
-            # Save converted demo
+            # Save converted demo with contiguous success numbering
             output_path = Path(output_dir)
             output_path.mkdir(exist_ok=True)
             
-            demo_path = output_path / f"rby1_cartesian_demo_{i:03d}.safetensors"
-            print(f"Saving RBY1 demo to {demo_path}...")
+            demo_path = output_path / f"rby1_cartesian_demo_{success_idx:03d}.safetensors"
+            print(f"Saving successful RBY1 demo to {demo_path}...")
             rby1_demo.save(demo_path)
+            success_idx += 1
             
             print(f"✓ Successfully saved RBY1 Cartesian demo")
             
@@ -428,7 +455,7 @@ def main():
     parser.add_argument(
         "--env", 
         type=str, 
-        default="MovePlate",
+        default="FlipCup",
         help="Environment name (e.g., ReachTarget, MovePlate, PickCube)"
     )
     parser.add_argument(
