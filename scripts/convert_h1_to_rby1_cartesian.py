@@ -85,7 +85,7 @@ def get_environment_class(env_name: str) -> Type:
         'DishwasherClose': 'bigym.envs.dishwasher',
         'DishwasherOpenTrays': 'bigym.envs.dishwasher',
         'DishwasherCloseTrays': 'bigym.envs.dishwasher',
-        'DishwasherLoadCups': 'bigym.envs.dishwasher',
+        'DishwasherLoadCups': 'bigym.envs.dishwasher_cups',
         'DishwasherLoadCutlery': 'bigym.envs.dishwasher',
         'DishwasherLoadPlates': 'bigym.envs.dishwasher',
         'DishwasherUnloadCups': 'bigym.envs.dishwasher',
@@ -229,7 +229,7 @@ def convert_h1_demo_to_rby1_cartesian(
             floating_dofs=floating_dofs
         ),
         control_frequency=control_frequency,
-        observation_config=ObservationConfig(cameras=camera_configs),
+        observation_config=ObservationConfig(cameras=[]),
         render_mode=render_mode,
         robot_cls=H1  # Use H1 robot class to replay original demo
     )
@@ -381,7 +381,7 @@ def convert_h1_demos_batch(
             floating_dofs=floating_dofs
         ),
         control_frequency=control_frequency,
-        observation_config=ObservationConfig(cameras=camera_configs),
+        observation_config=ObservationConfig(cameras=[]),
         render_mode=render_mode,
         robot_cls=H1  # Load H1 demos with H1 robot class
     )
