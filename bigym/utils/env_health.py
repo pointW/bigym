@@ -47,7 +47,7 @@ class EnvHealth:
                 f"Truncate current episode and reset the environment.\n"
                 f"{str(self._current_error)}"
             )
-            warnings.warn(error, UnstableSimulationWarning)
+            # warnings.warn(error, UnstableSimulationWarning)
             if len(self._consecutive_errors) >= self.CONSECUTIVE_WARNINGS_THRESHOLD:
                 raise UnstableSimulationError
 
