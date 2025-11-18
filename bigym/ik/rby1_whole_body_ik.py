@@ -115,7 +115,11 @@ class RBY1WholeBodyIK:
             data: MuJoCo data
         """
         self.model = model
-        self.data = data
+        self.data = mujoco.MjData(model)
+        if data is not None:
+            self.data.qpos[:] = data.qpos
+            self.data.qvel[:] = data.qvel
+            mujoco.mj_forward(self.model, self.data)
         
         # Store joint indices for different parts
         self._setup_joint_indices()
