@@ -79,6 +79,13 @@ RBY1_ACTUATORS = {
     "left_arm_6": True,
 }
 
+# Default neck pose used when the head is not actively controlled
+RBY1_HEAD_DEFAULT_JOINT_POSITIONS = {
+    "rby1/head_0": 0.0,    # keep head centered in yaw
+    # "rby1/head_1": 1.0,  
+    "rby1/head_1": 0.785398,  
+}
+
 # Full body configuration
 RBY1_FULL_BODY = FullBodyConfig(
     offset_position=np.array([0, 0, 0]),  # Keep base at ground level for wheeled robot
@@ -172,6 +179,47 @@ RBY1_FINE_MANIPULATION_CONFIG = RobotConfig(
     cameras=["head", "left_wrist", "right_wrist"],
     namespaces_to_remove=[],
 )
+
+
+def _apply_head_default_posture(mojo):
+    """Set head joints to default fixed angles and align actuator targets."""
+    if not mojo or not getattr(mojo, "physics", None):
+        return
+
+    model = mojo.physics.model._model
+    data = mojo.physics.data._data
+
+    def _resolve_id(obj_type, base_name):
+        """Find object id by trying bare and namespaced joint names."""
+        for candidate in (base_name, f"rby1/{base_name}"):
+            try:
+                return mujoco.mj_name2id(model, obj_type, candidate)
+            except ValueError:
+                continue
+        return -1
+
+    needs_forward = False
+    for joint_name, target in RBY1_HEAD_DEFAULT_JOINT_POSITIONS.items():
+        joint_id = _resolve_id(mujoco.mjtObj.mjOBJ_JOINT, joint_name)
+        if joint_id < 0:
+            continue
+
+        qpos_adr = model.jnt_qposadr[joint_id]
+        data.qpos[qpos_adr] = target
+        dof_adr = model.jnt_dofadr[joint_id]
+        data.qvel[dof_adr] = 0.0
+        data.qacc[dof_adr] = 0.0
+
+        actuator_id = _resolve_id(
+            mujoco.mjtObj.mjOBJ_ACTUATOR, f"{joint_name}_act"
+        )
+        if actuator_id >= 0:
+            data.ctrl[actuator_id] = target
+
+        needs_forward = True
+
+    if needs_forward:
+        mujoco.mj_forward(model, data)
 
 
 class RBY1(Robot):
@@ -275,7 +323,11 @@ class RBY1(Robot):
         data.mocap_pos[mocap_id][0] = position[0]
         data.mocap_pos[mocap_id][1] = position[1]
         data.mocap_quat[mocap_id] = orientation
-    
+
+    def reset(self, position: np.ndarray, orientation: np.ndarray):
+        super().reset(position, orientation)
+        _apply_head_default_posture(self._mojo)
+
     @property
     def config(self) -> RobotConfig:
         """Get robot config."""
@@ -429,6 +481,10 @@ class RBY1FineManipulation(Robot):
         
         # Call parent's _on_loaded to continue normal initialization
         super()._on_loaded(model)
+
+    def reset(self, position: np.ndarray, orientation: np.ndarray):
+        super().reset(position, orientation)
+        _apply_head_default_posture(self._mojo)
     
     @property
     def config(self) -> RobotConfig:

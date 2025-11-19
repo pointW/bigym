@@ -513,6 +513,7 @@
                                   <inertial pos="0 0 0" mass="0" diaginertia="0 0 0"/>
                                   <site name="end_effector_r" pos="0 0 0" size="0.01"/>
                                   <!-- <camera name="right_wrist" mode="fixed" fovy="90" euler="0 -1.57 -1.57" pos="0.08 0 0.03"/> -->
+                                  <!-- <camera name="right_wrist" mode="fixed" fovy="75" euler="0 -1.0 -1.57" pos="0.09 0 0.08"/> -->
                                   <camera name="right_wrist" mode="fixed" fovy="90" euler="0 -1.0 -1.57" pos="0.09 0 0.08"/>
                                   <!-- <geom class="visual" material="70,70,70" mesh="EE_BODY"/>
                                   <geom class="collision" size="0.04" pos="0.025 0 -0.04"/>
@@ -607,6 +608,7 @@
                                   <inertial pos="0 0 0" mass="0" diaginertia="0 0 0"/>
                                   <site name="end_effector_l" pos="0 0 0" size="0.01"/>
                                   <!-- <camera name="left_wrist" mode="fixed" fovy="90" euler="0 -0.785 -1.57" pos="0.1 0 0.07"/> -->
+                                  <!-- <camera name="left_wrist" mode="fixed" fovy="75" euler="0 -1.0 -1.57" pos="0.09 0 0.08"/> -->
                                   <camera name="left_wrist" mode="fixed" fovy="90" euler="0 -1.0 -1.57" pos="0.09 0 0.08"/>
                                   <!-- <geom class="visual" material="70,70,70" mesh="EE_BODY"/>
                                   <geom class="collision" size="0.04" pos="0.025 0 -0.04"/>
@@ -638,7 +640,8 @@
                       <geom class="visual" material="65,65,65" mesh="PAN_TILT_3_0"/>
                       <geom class="visual" material="69,69,69" mesh="PAN_TILT_3_1"/>
                       <site name="head" pos="0 0 0" size="0.01"/>
-                      <camera name="head" mode="fixed" fovy="70" euler="0 -0.52 -1.57" pos="0.12 0 0.05"/>
+                      <!-- <camera name="head" mode="fixed" fovy="105" euler="0 -0.785 -1.57" pos="0.12 0 0."/> -->
+                      <camera name="head" mode="fixed" fovy="90" euler="0 -1.57 -1.57" pos="0.1 0 0.05"/>
                     </body>
                   </body>
                 </body>
