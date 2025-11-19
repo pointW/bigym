@@ -130,6 +130,7 @@ class BiGymEnv(gym.Env):
         self.mujoco_renderer: Optional[BiGymRenderer] = None
         self.obs_renderers: Optional[dict[tuple[int, int], mujoco.Renderer]] = {}
         self._initialize_renderers()
+        self._rby1_head_site_id: Optional[int] = None
 
     @property
     def task_name(self) -> str:
@@ -314,6 +315,18 @@ class BiGymEnv(gym.Env):
                             shape=(4,),
                             dtype=np.float32,
                         ),
+                        "head_site_pos": spaces.Box(
+                            low=-np.inf,
+                            high=np.inf,
+                            shape=(3,),
+                            dtype=np.float32,
+                        ),
+                        "head_site_quat": spaces.Box(
+                            low=-1.0,
+                            high=1.0,
+                            shape=(4,),
+                            dtype=np.float32,
+                        ),
                     }
                 )
         if self._use_pixels:
@@ -377,6 +390,7 @@ class BiGymEnv(gym.Env):
             ).astype(np.float32)
         if isinstance(self.robot, RBY1):
             obs |= self._get_rby1_end_effector_obs()
+            obs |= self._get_rby1_head_pose_obs()
         return obs
 
     def _get_rby1_end_effector_obs(self) -> dict[str, np.ndarray]:
@@ -394,6 +408,29 @@ class BiGymEnv(gym.Env):
             mujoco.mju_mat2Quat(quat, site_bind.xmat)
             ee_obs[f"{prefix}_ee_quat"] = quat.astype(np.float32)
         return ee_obs
+
+    def _get_rby1_head_pose_obs(self) -> dict[str, np.ndarray]:
+        """Collect the head site pose for use in proprioceptive observations."""
+        site_id = self._get_rby1_head_site_id()
+        if site_id is None:
+            return {}
+        data = self._mojo.physics.data._data
+        head_pos = np.array(data.site_xpos[site_id], dtype=np.float32)
+        quat = np.zeros(4, dtype=np.float64)
+        mujoco.mju_mat2Quat(quat, data.site_xmat[site_id])
+        return {
+            "head_site_pos": head_pos,
+            "head_site_quat": quat.astype(np.float32),
+        }
+
+    def _get_rby1_head_site_id(self) -> Optional[int]:
+        """Resolve the MuJoCo site id for the robot head (cached)."""
+        if self._rby1_head_site_id is None:
+            model = self._mojo.physics.model._model
+            self._rby1_head_site_id = mujoco.mj_name2id(
+                        model, mujoco.mjtObj.mjOBJ_SITE, "rby1/head"
+            )
+        return self._rby1_head_site_id
 
     def _get_visual_obs(self) -> dict[str, Any]:
         """Get the visual observation."""
