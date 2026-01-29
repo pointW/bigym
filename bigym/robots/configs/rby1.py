@@ -1,5 +1,6 @@
 """RBY1 Robot Configuration."""
 import logging
+import os
 import mujoco
 import numpy as np
 from mojo.elements.consts import JointType
@@ -187,21 +188,27 @@ _EE_PERTURB_POS_RANGE = 0.05  # ±5 cm translational jitter
 _EE_PERTURB_ROT_RANGE = np.deg2rad(10.0)  # ±10° rotational jitter
 
 
-def _rand_unit_vec():
-    vec = np.random.normal(size=3)
+def _rand_unit_vec(rng: np.random.RandomState):
+    vec = rng.normal(size=3)
     norm = np.linalg.norm(vec)
     if norm < 1e-8:
         return np.array([1.0, 0.0, 0.0])
     return vec / norm
 
 
-def _small_random_quat(max_angle_rad: float) -> np.ndarray:
+def _small_random_quat(max_angle_rad: float, rng: np.random.RandomState) -> np.ndarray:
     """Sample a small random quaternion with angle bounded by max_angle_rad."""
-    axis = _rand_unit_vec()
-    angle = np.random.uniform(-max_angle_rad, max_angle_rad)
+    axis = _rand_unit_vec(rng)
+    angle = rng.uniform(-max_angle_rad, max_angle_rad)
     half = angle / 2.0
     sin_half = np.sin(half)
     return np.array([np.cos(half), *(axis * sin_half)], dtype=np.float64)
+
+
+def _rby1_perturb_enabled() -> bool:
+    """Return True if RBY1 init perturbation is enabled."""
+    value = os.getenv("RBY1_DISABLE_PERTURB", "0").strip().lower()
+    return value not in {"1", "true", "yes", "on"}
 
 
 def _perturb_rby1_end_effectors(mojo, pos_range: float, rot_range: float):
@@ -239,38 +246,58 @@ def _perturb_rby1_end_effectors(mojo, pos_range: float, rot_range: float):
         logging.debug("Skipping RBY1 EE perturbation (site lookup failed): %s", exc)
         return
 
-    def _perturb_pose(pos: np.ndarray, quat: np.ndarray):
-        delta_pos = np.random.uniform(-pos_range, pos_range, size=3)
-        delta_quat = _small_random_quat(rot_range)
-        new_pos = pos + delta_pos
-        new_quat = np.zeros(4, dtype=np.float64)
-        mujoco.mju_mulQuat(new_quat, delta_quat, quat)
-        return new_pos, new_quat
+    rng_state = np.random.get_state()
+    rng = np.random.RandomState()
+    rng.set_state(rng_state)
 
-    left_target_pos, left_target_quat = _perturb_pose(left_pos, left_quat)
-    right_target_pos, right_target_quat = _perturb_pose(right_pos, right_quat)
-
-    ik_solver = RBY1WholeBodyIK(model, data)
     try:
-        solution_qpos, success, _ = ik_solver.solve(
-            left_target_pos=left_target_pos,
-            left_target_quat=left_target_quat,
-            right_target_pos=right_target_pos,
-            right_target_quat=right_target_quat,
-            current_qpos=data.qpos.copy(),
-        )
-    except Exception as exc:  # noqa: BLE001
-        logging.debug("RBY1 EE perturbation solve failed: %s", exc)
-        return
+        def _perturb_pose(pos: np.ndarray, quat: np.ndarray):
+            delta_pos = rng.uniform(-pos_range, pos_range, size=3)
+            delta_quat = _small_random_quat(rot_range, rng)
+            new_pos = pos + delta_pos
+            new_quat = np.zeros(4, dtype=np.float64)
+            mujoco.mju_mulQuat(new_quat, delta_quat, quat)
+            return new_pos, new_quat
 
-    if not success or solution_qpos is None:
-        logging.debug("RBY1 EE perturbation IK did not converge; leaving init pose unchanged")
-        return
+        left_target_pos, left_target_quat = _perturb_pose(left_pos, left_quat)
+        right_target_pos, right_target_quat = _perturb_pose(right_pos, right_quat)
 
-    data.qpos[:] = solution_qpos
-    data.qvel[:] = 0.0
-    data.qacc[:] = 0.0
-    mujoco.mj_forward(model, data)
+        ik_solver = RBY1WholeBodyIK(model, data)
+        try:
+            solution_qpos, success, _ = ik_solver.solve(
+                left_target_pos=left_target_pos,
+                left_target_quat=left_target_quat,
+                right_target_pos=right_target_pos,
+                right_target_quat=right_target_quat,
+                current_qpos=data.qpos.copy(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logging.debug("RBY1 EE perturbation solve failed: %s", exc)
+            return
+
+        if not success or solution_qpos is None:
+            logging.debug("RBY1 EE perturbation IK did not converge; leaving init pose unchanged")
+            return
+
+        data.qpos[:] = solution_qpos
+        data.qvel[:] = 0.0
+        data.qacc[:] = 0.0
+        mujoco.mj_forward(model, data)
+    finally:
+        # Restore RNG state so task randomization stays consistent.
+        np.random.set_state(rng_state)
+
+    # Keep base_target mocap aligned with the updated base pose.
+    base_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "rby1/base")
+    base_target_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base_target")
+    if base_body_id >= 0 and base_target_body_id >= 0:
+        mocap_id = model.body_mocapid[base_target_body_id]
+        if mocap_id >= 0:
+            data.mocap_pos[mocap_id][:] = data.xpos[base_body_id]
+            base_quat = np.zeros(4, dtype=np.float64)
+            mujoco.mju_mat2Quat(base_quat, data.xmat[base_body_id])
+            data.mocap_quat[mocap_id][:] = base_quat
+            mujoco.mj_forward(model, data)
 
 
 def _apply_head_default_posture(mojo):
@@ -419,9 +446,12 @@ class RBY1(Robot):
     def reset(self, position: np.ndarray, orientation: np.ndarray):
         super().reset(position, orientation)
         _apply_head_default_posture(self._mojo)
-        _perturb_rby1_end_effectors(
-            self._mojo, pos_range=_EE_PERTURB_POS_RANGE, rot_range=_EE_PERTURB_ROT_RANGE
-        )
+        if _rby1_perturb_enabled():
+            _perturb_rby1_end_effectors(
+                self._mojo,
+                pos_range=_EE_PERTURB_POS_RANGE,
+                rot_range=_EE_PERTURB_ROT_RANGE,
+            )
 
     @property
     def config(self) -> RobotConfig:
@@ -580,9 +610,12 @@ class RBY1FineManipulation(Robot):
     def reset(self, position: np.ndarray, orientation: np.ndarray):
         super().reset(position, orientation)
         _apply_head_default_posture(self._mojo)
-        _perturb_rby1_end_effectors(
-            self._mojo, pos_range=_EE_PERTURB_POS_RANGE, rot_range=_EE_PERTURB_ROT_RANGE
-        )
+        if _rby1_perturb_enabled():
+            _perturb_rby1_end_effectors(
+                self._mojo,
+                pos_range=_EE_PERTURB_POS_RANGE,
+                rot_range=_EE_PERTURB_ROT_RANGE,
+            )
     
     @property
     def config(self) -> RobotConfig:
