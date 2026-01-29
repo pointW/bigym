@@ -1,4 +1,5 @@
 """RBY1 Robot Configuration."""
+import logging
 import mujoco
 import numpy as np
 from mojo.elements.consts import JointType
@@ -181,6 +182,97 @@ RBY1_FINE_MANIPULATION_CONFIG = RobotConfig(
 )
 
 
+# Small end-effector perturbation applied after reset (meters / radians)
+_EE_PERTURB_POS_RANGE = 0.05  # ±5 cm translational jitter
+_EE_PERTURB_ROT_RANGE = np.deg2rad(10.0)  # ±10° rotational jitter
+
+
+def _rand_unit_vec():
+    vec = np.random.normal(size=3)
+    norm = np.linalg.norm(vec)
+    if norm < 1e-8:
+        return np.array([1.0, 0.0, 0.0])
+    return vec / norm
+
+
+def _small_random_quat(max_angle_rad: float) -> np.ndarray:
+    """Sample a small random quaternion with angle bounded by max_angle_rad."""
+    axis = _rand_unit_vec()
+    angle = np.random.uniform(-max_angle_rad, max_angle_rad)
+    half = angle / 2.0
+    sin_half = np.sin(half)
+    return np.array([np.cos(half), *(axis * sin_half)], dtype=np.float64)
+
+
+def _perturb_rby1_end_effectors(mojo, pos_range: float, rot_range: float):
+    """Apply a small SE(3) perturbation to both end effectors via IK.
+
+    Keeps the robot in a valid configuration while slightly moving wrists.
+    """
+
+    if mojo is None or not getattr(mojo, "physics", None):
+        return
+
+    try:
+        from bigym.ik.rby1_whole_body_ik import RBY1WholeBodyIK
+    except Exception as exc:  # noqa: BLE001 - we want to swallow any import issues
+        logging.debug("Skipping RBY1 EE perturbation (IK unavailable): %s", exc)
+        return
+
+    physics = mojo.physics
+    model = physics.model._model
+    data = physics.data._data
+
+    def _site_pose(site_name: str):
+        site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, site_name)
+        if site_id < 0:
+            raise ValueError(f"Site '{site_name}' not found")
+        pos = np.array(data.site_xpos[site_id], dtype=np.float64)
+        quat = np.zeros(4, dtype=np.float64)
+        mujoco.mju_mat2Quat(quat, data.site_xmat[site_id])
+        return pos, quat
+
+    try:
+        left_pos, left_quat = _site_pose("rby1/end_effector_l")
+        right_pos, right_quat = _site_pose("rby1/end_effector_r")
+    except ValueError as exc:  # noqa: BLE001
+        logging.debug("Skipping RBY1 EE perturbation (site lookup failed): %s", exc)
+        return
+
+    def _perturb_pose(pos: np.ndarray, quat: np.ndarray):
+        delta_pos = np.random.uniform(-pos_range, pos_range, size=3)
+        delta_quat = _small_random_quat(rot_range)
+        new_pos = pos + delta_pos
+        new_quat = np.zeros(4, dtype=np.float64)
+        mujoco.mju_mulQuat(new_quat, delta_quat, quat)
+        return new_pos, new_quat
+
+    left_target_pos, left_target_quat = _perturb_pose(left_pos, left_quat)
+    right_target_pos, right_target_quat = _perturb_pose(right_pos, right_quat)
+
+    ik_solver = RBY1WholeBodyIK(model, data)
+    try:
+        solution_qpos, success, _ = ik_solver.solve(
+            left_target_pos=left_target_pos,
+            left_target_quat=left_target_quat,
+            right_target_pos=right_target_pos,
+            right_target_quat=right_target_quat,
+            current_qpos=data.qpos.copy(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logging.debug("RBY1 EE perturbation solve failed: %s", exc)
+        return
+
+    if not success or solution_qpos is None:
+        logging.debug("RBY1 EE perturbation IK did not converge; leaving init pose unchanged")
+        return
+
+    data.qpos[:] = solution_qpos
+    data.qvel[:] = 0.0
+    data.qacc[:] = 0.0
+    mujoco.mj_forward(model, data)
+
+
 def _apply_head_default_posture(mojo):
     """Set head joints to default fixed angles and align actuator targets."""
     if not mojo or not getattr(mojo, "physics", None):
@@ -327,6 +419,9 @@ class RBY1(Robot):
     def reset(self, position: np.ndarray, orientation: np.ndarray):
         super().reset(position, orientation)
         _apply_head_default_posture(self._mojo)
+        _perturb_rby1_end_effectors(
+            self._mojo, pos_range=_EE_PERTURB_POS_RANGE, rot_range=_EE_PERTURB_ROT_RANGE
+        )
 
     @property
     def config(self) -> RobotConfig:
@@ -485,6 +580,9 @@ class RBY1FineManipulation(Robot):
     def reset(self, position: np.ndarray, orientation: np.ndarray):
         super().reset(position, orientation)
         _apply_head_default_posture(self._mojo)
+        _perturb_rby1_end_effectors(
+            self._mojo, pos_range=_EE_PERTURB_POS_RANGE, rot_range=_EE_PERTURB_ROT_RANGE
+        )
     
     @property
     def config(self) -> RobotConfig:
