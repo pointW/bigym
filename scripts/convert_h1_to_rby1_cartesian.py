@@ -365,6 +365,7 @@ def convert_h1_demo_to_rby1_cartesian(
     robot_type: str = "rby1",
     blend_steps: int = 0,
     blend_ori_steps: Optional[int] = None,
+    perturb_seed: Optional[int] = None,
 ) -> Tuple[Demo, bool]:
     """Convert a single H1 joint demo to RBY1 Cartesian demo.
     
@@ -378,6 +379,7 @@ def convert_h1_demo_to_rby1_cartesian(
         robot_type: Target robot type (should be "rby1")
         blend_steps: Number of initial steps to blend from perturbed pose
         blend_ori_steps: Steps to blend orientation (defaults to blend_steps)
+        perturb_seed: Optional seed for RBY1 EE perturbation
         
     Returns:
         Tuple of (converted demo, success flag from RBY1 rollout)
@@ -465,7 +467,19 @@ def convert_h1_demo_to_rby1_cartesian(
         robot_cls=RBY1,
     )
     
-    rby1_obs, _ = rby1_env.reset(seed=original_demo.seed)
+    prev_perturb_seed = os.getenv("RBY1_PERTURB_SEED")
+    if perturb_seed is None:
+        os.environ.pop("RBY1_PERTURB_SEED", None)
+    else:
+        os.environ["RBY1_PERTURB_SEED"] = str(int(perturb_seed))
+
+    try:
+        rby1_obs, _ = rby1_env.reset(seed=original_demo.seed)
+    finally:
+        if prev_perturb_seed is None:
+            os.environ.pop("RBY1_PERTURB_SEED", None)
+        else:
+            os.environ["RBY1_PERTURB_SEED"] = prev_perturb_seed
 
     
     timesteps: list[DemoStep] = []
@@ -522,6 +536,7 @@ def _convert_demo_worker(
         str,
         int,
         Optional[int],
+        Optional[int],
     ]
 ) -> Tuple[int, bool, Optional[Demo], Optional[str]]:
     """Worker for multiprocessing demo conversion."""
@@ -535,6 +550,7 @@ def _convert_demo_worker(
         robot_type,
         blend_steps,
         blend_ori_steps,
+        perturb_seed,
     ) = payload
     try:
         env_class = get_environment_class(env_name)
@@ -548,6 +564,7 @@ def _convert_demo_worker(
             robot_type,
             blend_steps=blend_steps,
             blend_ori_steps=blend_ori_steps,
+        perturb_seed=perturb_seed,
         )
         return index, success, rby1_demo, None
     except Exception:
@@ -565,6 +582,10 @@ def convert_h1_demos_batch(
     blend_steps: int = 0,
     blend_ori_steps: Optional[int] = None,
     processes: int = 1,
+    source_seed: Optional[int] = None,
+    perturb_variants: int = 1,
+    perturb_seed_base: Optional[int] = None,
+    perturb_seed_step: int = 1,
 ) -> List[Demo]:
     """Convert a batch of H1 demonstrations to RBY1 Cartesian format.
     
@@ -578,6 +599,10 @@ def convert_h1_demos_batch(
         robot_type: Target robot type (default "rby1")
         blend_steps: Number of initial steps to blend from perturbed pose
         blend_ori_steps: Steps to blend orientation (defaults to blend_steps)
+        source_seed: Seed of the source demo to convert (optional)
+        perturb_variants: Number of perturbation variants to generate per source demo
+        perturb_seed_base: Base seed for perturbation variants
+        perturb_seed_step: Step size between perturbation seeds
         
     Returns:
         List of converted RBY1 Cartesian demos
@@ -622,39 +647,54 @@ def convert_h1_demos_batch(
     print("Loading original H1 joint demonstrations...")
     demo_store = DemoStore()
     h1_metadata = Metadata.from_env(h1_env)
+    demo_amount = -1 if source_seed is not None else demo_amount
     original_demos = demo_store.get_demos(
-        h1_metadata, 
-        amount=demo_amount, 
-        frequency=control_frequency
+        h1_metadata,
+        amount=demo_amount,
+        frequency=control_frequency,
     )
     
     h1_env.close()
     
+    if source_seed is not None:
+        original_demos = [d for d in original_demos if d.seed == source_seed]
+        if not original_demos:
+            raise ValueError(f"No demo found for seed {source_seed}")
+
     print(f"Loaded {len(original_demos)} original H1 demos")
     
     # Convert each demo
     rby1_cartesian_demos = []
+    total_variants = max(1, int(perturb_variants)) * len(original_demos)
     results: list[Optional[Tuple[bool, Optional[Demo], Optional[str]]]] = [
-        None for _ in range(len(original_demos))
+        None for _ in range(total_variants)
     ]
 
     if processes > 1:
         print(f"Using multiprocessing with {processes} processes")
         ctx = mp.get_context("spawn")
-        payloads = [
-            (
-                i,
-                original_demo,
-                env_name,
-                camera_configs,
-                control_frequency,
-                render_mode,
-                robot_type,
-                blend_steps,
-                blend_ori_steps,
-            )
-            for i, original_demo in enumerate(original_demos)
-        ]
+        payloads = []
+        for i, original_demo in enumerate(original_demos):
+            variants = max(1, int(perturb_variants))
+            base_seed = perturb_seed_base if perturb_seed_base is not None else original_demo.seed
+            for variant_idx in range(variants):
+                perturb_seed = None
+                if variants > 1 or perturb_seed_base is not None:
+                    perturb_seed = base_seed + variant_idx * perturb_seed_step
+                payloads.append(
+                    (
+                        len(payloads),
+                        original_demo,
+                        env_name,
+                        camera_configs,
+                        control_frequency,
+                        render_mode,
+                        robot_type,
+                        blend_steps,
+                        blend_ori_steps,
+                        perturb_seed,
+                    )
+                )
         with ctx.Pool(processes=processes) as pool:
             for index, success, demo, error in tqdm(
                 pool.imap_unordered(_convert_demo_worker, payloads),
@@ -663,23 +703,32 @@ def convert_h1_demos_batch(
             ):
                 results[index] = (success, demo, error)
     else:
+        idx = 0
         for i, original_demo in enumerate(original_demos):
-            print(f"\nConverting H1 demo {i+1}/{len(original_demos)} to RBY1 Cartesian...")
-            try:
-                rby1_demo, success = convert_h1_demo_to_rby1_cartesian(
-                    original_demo,
-                    env_class,
-                    env_name,
-                    camera_configs,
-                    control_frequency,
-                    render_mode,
-                    robot_type,
-                    blend_steps=blend_steps,
-                    blend_ori_steps=blend_ori_steps,
-                )
-                results[i] = (success, rby1_demo, None)
-            except Exception:
-                results[i] = (False, None, traceback.format_exc())
+            variants = max(1, int(perturb_variants))
+            base_seed = perturb_seed_base if perturb_seed_base is not None else original_demo.seed
+            for variant_idx in range(variants):
+                perturb_seed = None
+                if variants > 1 or perturb_seed_base is not None:
+                    perturb_seed = base_seed + variant_idx * perturb_seed_step
+                print(f"\nConverting H1 demo {i+1}/{len(original_demos)} variant {variant_idx+1}/{variants}...")
+                try:
+                    rby1_demo, success = convert_h1_demo_to_rby1_cartesian(
+                        original_demo,
+                        env_class,
+                        env_name,
+                        camera_configs,
+                        control_frequency,
+                        render_mode,
+                        robot_type,
+                        blend_steps=blend_steps,
+                        blend_ori_steps=blend_ori_steps,
+                        perturb_seed=perturb_seed,
+                    )
+                    results[idx] = (success, rby1_demo, None)
+                except Exception:
+                    results[idx] = (False, None, traceback.format_exc())
+                idx += 1
 
     success_idx = 0
     output_path = Path(output_dir)
@@ -761,6 +810,30 @@ def main():
         help="Steps to blend orientation (defaults to blend-steps)"
     )
     parser.add_argument(
+        "--source-seed",
+        type=int,
+        default=None,
+        help="Seed of the source demo to convert"
+    )
+    parser.add_argument(
+        "--perturb-variants",
+        type=int,
+        default=1,
+        help="Number of perturbation variants per source demo"
+    )
+    parser.add_argument(
+        "--perturb-seed-base",
+        type=int,
+        default=None,
+        help="Base seed for perturbation variants (defaults to demo seed)"
+    )
+    parser.add_argument(
+        "--perturb-seed-step",
+        type=int,
+        default=1,
+        help="Step between perturbation seeds"
+    )
+    parser.add_argument(
         "--processes",
         type=int,
         default=1,
@@ -780,6 +853,10 @@ def main():
         blend_steps=args.blend_steps,
         blend_ori_steps=args.blend_ori_steps,
         processes=args.processes,
+        source_seed=args.source_seed,
+        perturb_variants=args.perturb_variants,
+        perturb_seed_base=args.perturb_seed_base,
+        perturb_seed_step=args.perturb_seed_step,
     )
     
     print(f"\nConversion complete! Converted {len(converted_demos)} H1 demos to RBY1 Cartesian format.")

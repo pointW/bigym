@@ -247,8 +247,16 @@ def _perturb_rby1_end_effectors(mojo, pos_range: float, rot_range: float):
         return
 
     rng_state = np.random.get_state()
-    rng = np.random.RandomState()
-    rng.set_state(rng_state)
+    seed_value = os.getenv("RBY1_PERTURB_SEED")
+    if seed_value is not None:
+        try:
+            rng = np.random.RandomState(int(seed_value))
+        except ValueError:
+            rng = np.random.RandomState()
+            rng.set_state(rng_state)
+    else:
+        rng = np.random.RandomState()
+        rng.set_state(rng_state)
 
     try:
         def _perturb_pose(pos: np.ndarray, quat: np.ndarray):
