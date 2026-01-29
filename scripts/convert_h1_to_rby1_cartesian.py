@@ -20,6 +20,7 @@ from bigym.utils.observation_config import ObservationConfig, CameraConfig
 from bigym.rby1_cartesian_action_mode_whole_body import (
     RBY1CartesianActionModeWholeBody,
     rotation_matrix_to_6d,
+    rotation_6d_to_matrix,
 )
 from vr.ik.h1_upper_body_ik import Pose
 from bigym.const import HandSide
@@ -187,6 +188,171 @@ def poses_to_rby1_cartesian_action(
     return np.concatenate(action_parts)
 
 
+def _split_rby1_cartesian_action(
+    action: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Split a 20D RBY1 Cartesian action into components."""
+    idx = 0
+    left_pos = action[idx:idx + 3]
+    idx += 3
+    left_rot_6d = action[idx:idx + 6]
+    idx += 6
+    right_pos = action[idx:idx + 3]
+    idx += 3
+    right_rot_6d = action[idx:idx + 6]
+    idx += 6
+    gripper_action = action[idx:]
+    return left_pos, left_rot_6d, right_pos, right_rot_6d, gripper_action
+
+
+def _get_initial_ee_poses_from_obs(
+    obs: Dict[str, np.ndarray]
+) -> Optional[Tuple[Pose, Pose]]:
+    """Extract initial end-effector poses from observation."""
+    left_pos = obs.get("left_ee_pos")
+    right_pos = obs.get("right_ee_pos")
+    left_quat = obs.get("left_ee_quat")
+    right_quat = obs.get("right_ee_quat")
+    if (
+        left_pos is None
+        or right_pos is None
+        or left_quat is None
+        or right_quat is None
+    ):
+        return None
+    left_pose = Pose(left_pos, Quaternion(left_quat))
+    right_pose = Pose(right_pos, Quaternion(right_quat))
+    return left_pose, right_pose
+
+
+def _blend_cartesian_actions(
+    cartesian_actions: List[np.ndarray],
+    initial_left_pose: Pose,
+    initial_right_pose: Pose,
+    blend_steps: int,
+    target_left_pose: Optional[Pose] = None,
+    target_right_pose: Optional[Pose] = None,
+) -> List[np.ndarray]:
+    """Blend initial steps from current pose to a target pose."""
+    if blend_steps <= 0 or not cartesian_actions:
+        return cartesian_actions
+
+    steps = min(blend_steps, len(cartesian_actions))
+    blended = list(cartesian_actions)
+
+    if target_left_pose is None or target_right_pose is None:
+        (
+            left_pos0,
+            left_rot_6d_0,
+            right_pos0,
+            right_rot_6d_0,
+            _,
+        ) = _split_rby1_cartesian_action(blended[0])
+        target_left_pose = Pose(
+            left_pos0, Quaternion(matrix=rotation_6d_to_matrix(left_rot_6d_0))
+        )
+        target_right_pose = Pose(
+            right_pos0, Quaternion(matrix=rotation_6d_to_matrix(right_rot_6d_0))
+        )
+
+    def _compute_delta(init_pose: Pose, target_pose: Pose):
+        delta_quat = init_pose.orientation * target_pose.orientation.inverse
+        delta_rot = delta_quat.rotation_matrix
+        delta_t = init_pose.position - delta_rot @ target_pose.position
+        return delta_quat, delta_rot, delta_t
+
+    left_delta_quat, left_delta_rot, left_delta_t = _compute_delta(
+        initial_left_pose, target_left_pose
+    )
+    right_delta_quat, right_delta_rot, right_delta_t = _compute_delta(
+        initial_right_pose, target_right_pose
+    )
+
+    for i in range(steps):
+        alpha = (i + 1) / steps
+        (
+            left_pos,
+            left_rot_6d,
+            right_pos,
+            right_rot_6d,
+            gripper_action,
+        ) = _split_rby1_cartesian_action(blended[i])
+
+        left_quat = Quaternion(matrix=rotation_6d_to_matrix(left_rot_6d))
+        right_quat = Quaternion(matrix=rotation_6d_to_matrix(right_rot_6d))
+
+        left_rel_pos = left_delta_rot @ left_pos + left_delta_t
+        right_rel_pos = right_delta_rot @ right_pos + right_delta_t
+        left_rel_quat = left_delta_quat * left_quat
+        right_rel_quat = right_delta_quat * right_quat
+
+        left_blend_pos = (1 - alpha) * left_rel_pos + alpha * left_pos
+        right_blend_pos = (1 - alpha) * right_rel_pos + alpha * right_pos
+        left_blend_quat = Quaternion.slerp(left_rel_quat, left_quat, amount=alpha)
+        right_blend_quat = Quaternion.slerp(right_rel_quat, right_quat, amount=alpha)
+
+        blended[i] = np.concatenate(
+            [
+                left_blend_pos,
+                rotation_matrix_to_6d(left_blend_quat.rotation_matrix),
+                right_blend_pos,
+                rotation_matrix_to_6d(right_blend_quat.rotation_matrix),
+                gripper_action,
+            ]
+        )
+
+    return blended
+
+
+def _blend_action_from_obs(
+    obs: Dict[str, np.ndarray],
+    target_action: np.ndarray,
+    alpha_pos: float,
+    alpha_ori: Optional[float] = None,
+) -> np.ndarray:
+    """Blend current observed EE pose toward target action."""
+    if alpha_ori is None:
+        alpha_ori = alpha_pos
+    left_pos, left_rot_6d, right_pos, right_rot_6d, gripper_action = _split_rby1_cartesian_action(
+        target_action
+    )
+    current_left_pos = obs.get("left_ee_pos")
+    current_right_pos = obs.get("right_ee_pos")
+    current_left_quat = obs.get("left_ee_quat")
+    current_right_quat = obs.get("right_ee_quat")
+    if (
+        current_left_pos is None
+        or current_right_pos is None
+        or current_left_quat is None
+        or current_right_quat is None
+    ):
+        return target_action
+
+    left_quat = Quaternion(matrix=rotation_6d_to_matrix(left_rot_6d))
+    right_quat = Quaternion(matrix=rotation_6d_to_matrix(right_rot_6d))
+    current_left_quat = Quaternion(current_left_quat)
+    current_right_quat = Quaternion(current_right_quat)
+
+    blend_left_pos = (1 - alpha_pos) * current_left_pos + alpha_pos * left_pos
+    blend_right_pos = (1 - alpha_pos) * current_right_pos + alpha_pos * right_pos
+    blend_left_quat = Quaternion.slerp(
+        current_left_quat, left_quat, amount=alpha_ori
+    )
+    blend_right_quat = Quaternion.slerp(
+        current_right_quat, right_quat, amount=alpha_ori
+    )
+
+    return np.concatenate(
+        [
+            blend_left_pos,
+            rotation_matrix_to_6d(blend_left_quat.rotation_matrix),
+            blend_right_pos,
+            rotation_matrix_to_6d(blend_right_quat.rotation_matrix),
+            gripper_action,
+        ]
+    )
+
+
 def convert_h1_demo_to_rby1_cartesian(
     original_demo: Demo,
     env_class: Type,
@@ -194,7 +360,9 @@ def convert_h1_demo_to_rby1_cartesian(
     camera_configs: List[CameraConfig],
     control_frequency: int = 50,
     render_mode: Optional[str] = None,
-    robot_type: str = "rby1"
+    robot_type: str = "rby1",
+    blend_steps: int = 0,
+    blend_ori_steps: Optional[int] = None,
 ) -> Tuple[Demo, bool]:
     """Convert a single H1 joint demo to RBY1 Cartesian demo.
     
@@ -206,6 +374,8 @@ def convert_h1_demo_to_rby1_cartesian(
         control_frequency: Control frequency for the environment
         render_mode: Render mode (None for headless)
         robot_type: Target robot type (should be "rby1")
+        blend_steps: Number of initial steps to blend from perturbed pose
+        blend_ori_steps: Steps to blend orientation (defaults to blend_steps)
         
     Returns:
         Tuple of (converted demo, success flag from RBY1 rollout)
@@ -293,17 +463,29 @@ def convert_h1_demo_to_rby1_cartesian(
         robot_cls=RBY1,
     )
     
-    rby1_env.reset(seed=original_demo.seed)
+    rby1_obs, _ = rby1_env.reset(seed=original_demo.seed)
+
     
     timesteps: list[DemoStep] = []
     last_info: Dict[str, Any] = {}
-    for cartesian_action in cartesian_actions:
+    for step_idx, cartesian_action in enumerate(cartesian_actions):
+        if blend_steps > 0 and step_idx < blend_steps:
+            alpha_pos = (step_idx + 1) / blend_steps
+            ori_steps = blend_ori_steps or blend_steps
+            alpha_ori = min((step_idx + 1) / ori_steps, 1.0)
+            cartesian_action = _blend_action_from_obs(
+                rby1_obs,
+                cartesian_action,
+                alpha_pos,
+                alpha_ori=alpha_ori,
+            )
         clipped_action = np.clip(
             cartesian_action,
             rby1_env.action_space.low,
             rby1_env.action_space.high,
         )
         obs, reward, terminated, truncated, info = rby1_env.step(clipped_action)
+        rby1_obs = obs
         info = info or {}
         last_info = info
         timesteps.append(
@@ -334,7 +516,9 @@ def convert_h1_demos_batch(
     camera_configs: Optional[List[CameraConfig]] = None,
     control_frequency: int = 50,
     render_mode: Optional[str] = None,
-    robot_type: str = "rby1"
+    robot_type: str = "rby1",
+    blend_steps: int = 0,
+    blend_ori_steps: Optional[int] = None,
 ) -> List[Demo]:
     """Convert a batch of H1 demonstrations to RBY1 Cartesian format.
     
@@ -346,6 +530,8 @@ def convert_h1_demos_batch(
         control_frequency: Control frequency
         render_mode: Render mode for conversion
         robot_type: Target robot type (default "rby1")
+        blend_steps: Number of initial steps to blend from perturbed pose
+        blend_ori_steps: Steps to blend orientation (defaults to blend_steps)
         
     Returns:
         List of converted RBY1 Cartesian demos
@@ -415,7 +601,9 @@ def convert_h1_demos_batch(
                 camera_configs,
                 control_frequency,
                 render_mode,
-                robot_type
+                robot_type,
+                blend_steps=blend_steps,
+                blend_ori_steps=blend_ori_steps,
             )
             status_msg = "SUCCESS" if success else "FAILURE"
             print(f"RBY1 rollout result: {status_msg}")
@@ -487,6 +675,18 @@ def main():
         default="rby1",
         help="Target robot type (default: rby1)"
     )
+    parser.add_argument(
+        "--blend-steps",
+        type=int,
+        default=0,
+        help="Number of initial steps to blend from perturbed pose"
+    )
+    parser.add_argument(
+        "--blend-ori-steps",
+        type=int,
+        default=None,
+        help="Steps to blend orientation (defaults to blend-steps)"
+    )
     
     args = parser.parse_args()
     
@@ -497,7 +697,9 @@ def main():
         output_dir=args.output_dir,
         control_frequency=args.control_freq,
         render_mode="human" if args.render else None,
-        robot_type=args.robot
+        robot_type=args.robot,
+        blend_steps=args.blend_steps,
+        blend_ori_steps=args.blend_ori_steps,
     )
     
     print(f"\nConversion complete! Converted {len(converted_demos)} H1 demos to RBY1 Cartesian format.")
