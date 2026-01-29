@@ -12,6 +12,8 @@ import numpy as np
 from pathlib import Path
 from typing import List, Type, Optional, Dict, Any, Tuple
 import importlib
+import multiprocessing as mp
+import traceback
 from tqdm import tqdm
 from pyquaternion import Quaternion
 
@@ -509,6 +511,49 @@ def convert_h1_demo_to_rby1_cartesian(
     return Demo(metadata=rby1_metadata, timesteps=timesteps), success
 
 
+def _convert_demo_worker(
+    payload: Tuple[
+        int,
+        Demo,
+        str,
+        List[CameraConfig],
+        int,
+        Optional[str],
+        str,
+        int,
+        Optional[int],
+    ]
+) -> Tuple[int, bool, Optional[Demo], Optional[str]]:
+    """Worker for multiprocessing demo conversion."""
+    (
+        index,
+        original_demo,
+        env_name,
+        camera_configs,
+        control_frequency,
+        render_mode,
+        robot_type,
+        blend_steps,
+        blend_ori_steps,
+    ) = payload
+    try:
+        env_class = get_environment_class(env_name)
+        rby1_demo, success = convert_h1_demo_to_rby1_cartesian(
+            original_demo,
+            env_class,
+            env_name,
+            camera_configs,
+            control_frequency,
+            render_mode,
+            robot_type,
+            blend_steps=blend_steps,
+            blend_ori_steps=blend_ori_steps,
+        )
+        return index, success, rby1_demo, None
+    except Exception:
+        return index, False, None, traceback.format_exc()
+
+
 def convert_h1_demos_batch(
     env_name: str,
     demo_amount: int = 3,
@@ -519,6 +564,7 @@ def convert_h1_demos_batch(
     robot_type: str = "rby1",
     blend_steps: int = 0,
     blend_ori_steps: Optional[int] = None,
+    processes: int = 1,
 ) -> List[Demo]:
     """Convert a batch of H1 demonstrations to RBY1 Cartesian format.
     
@@ -588,46 +634,73 @@ def convert_h1_demos_batch(
     
     # Convert each demo
     rby1_cartesian_demos = []
-    
-    success_idx = 0
-    for i, original_demo in enumerate(original_demos):
-        print(f"\nConverting H1 demo {i+1}/{len(original_demos)} to RBY1 Cartesian...")
-        
-        try:
-            rby1_demo, success = convert_h1_demo_to_rby1_cartesian(
+    results: list[Optional[Tuple[bool, Optional[Demo], Optional[str]]]] = [
+        None for _ in range(len(original_demos))
+    ]
+
+    if processes > 1:
+        print(f"Using multiprocessing with {processes} processes")
+        ctx = mp.get_context("spawn")
+        payloads = [
+            (
+                i,
                 original_demo,
-                env_class,
                 env_name,
                 camera_configs,
                 control_frequency,
                 render_mode,
                 robot_type,
-                blend_steps=blend_steps,
-                blend_ori_steps=blend_ori_steps,
+                blend_steps,
+                blend_ori_steps,
             )
-            status_msg = "SUCCESS" if success else "FAILURE"
-            print(f"RBY1 rollout result: {status_msg}")
-            if not success:
-                print("Skipping save because the converted demo did not succeed.")
-                continue
-            rby1_cartesian_demos.append(rby1_demo)
-            
-            # Save converted demo with contiguous success numbering
-            output_path = Path(output_dir)
-            output_path.mkdir(exist_ok=True)
-            
-            demo_path = output_path / f"rby1_cartesian_demo_{success_idx:03d}.safetensors"
-            print(f"Saving successful RBY1 demo to {demo_path}...")
-            rby1_demo.save(demo_path)
-            success_idx += 1
-            
-            print(f"✓ Successfully saved RBY1 Cartesian demo")
-            
-        except Exception as e:
-            print(f"❌ Error converting H1 demo {i+1}: {e}")
-            import traceback
-            traceback.print_exc()
+            for i, original_demo in enumerate(original_demos)
+        ]
+        with ctx.Pool(processes=processes) as pool:
+            for index, success, demo, error in tqdm(
+                pool.imap_unordered(_convert_demo_worker, payloads),
+                total=len(payloads),
+                desc="Converting demos",
+            ):
+                results[index] = (success, demo, error)
+    else:
+        for i, original_demo in enumerate(original_demos):
+            print(f"\nConverting H1 demo {i+1}/{len(original_demos)} to RBY1 Cartesian...")
+            try:
+                rby1_demo, success = convert_h1_demo_to_rby1_cartesian(
+                    original_demo,
+                    env_class,
+                    env_name,
+                    camera_configs,
+                    control_frequency,
+                    render_mode,
+                    robot_type,
+                    blend_steps=blend_steps,
+                    blend_ori_steps=blend_ori_steps,
+                )
+                results[i] = (success, rby1_demo, None)
+            except Exception:
+                results[i] = (False, None, traceback.format_exc())
+
+    success_idx = 0
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True)
+    for i, result in enumerate(results):
+        success, rby1_demo, error = result or (False, None, "No result returned.")
+        print(f"\nConverting H1 demo {i+1}/{len(original_demos)} to RBY1 Cartesian...")
+        if error:
+            print(f"❌ Error converting H1 demo {i+1}:\n{error}")
             continue
+        status_msg = "SUCCESS" if success else "FAILURE"
+        print(f"RBY1 rollout result: {status_msg}")
+        if not success or rby1_demo is None:
+            print("Skipping save because the converted demo did not succeed.")
+            continue
+        rby1_cartesian_demos.append(rby1_demo)
+        demo_path = output_path / f"rby1_cartesian_demo_{success_idx:03d}.safetensors"
+        print(f"Saving successful RBY1 demo to {demo_path}...")
+        rby1_demo.save(demo_path)
+        success_idx += 1
+        print("✓ Successfully saved RBY1 Cartesian demo")
     
     print(f"\nSuccessfully converted {len(rby1_cartesian_demos)}/{len(original_demos)} H1 demonstrations to RBY1")
     return rby1_cartesian_demos
@@ -687,6 +760,12 @@ def main():
         default=None,
         help="Steps to blend orientation (defaults to blend-steps)"
     )
+    parser.add_argument(
+        "--processes",
+        type=int,
+        default=1,
+        help="Number of worker processes to use"
+    )
     
     args = parser.parse_args()
     
@@ -700,6 +779,7 @@ def main():
         robot_type=args.robot,
         blend_steps=args.blend_steps,
         blend_ori_steps=args.blend_ori_steps,
+        processes=args.processes,
     )
     
     print(f"\nConversion complete! Converted {len(converted_demos)} H1 demos to RBY1 Cartesian format.")
