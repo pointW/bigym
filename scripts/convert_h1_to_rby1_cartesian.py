@@ -9,6 +9,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
+import imageio.v2 as imageio
 from pathlib import Path
 from typing import List, Type, Optional, Dict, Any, Tuple
 import importlib
@@ -417,7 +418,7 @@ def convert_h1_demo_to_rby1_cartesian(
         if h1_env.action_mode.floating_base else 0
     )
     
-    for step_idx, joint_action in enumerate(tqdm(joint_actions, desc="Converting steps")):
+    for step_idx, joint_action in enumerate(joint_actions):
         # Clip joint action to H1 bounds
         joint_action_clipped = np.clip(
             joint_action, 
@@ -586,6 +587,8 @@ def convert_h1_demos_batch(
     perturb_variants: int = 1,
     perturb_seed_base: Optional[int] = None,
     perturb_seed_step: int = 1,
+    save_videos: bool = False,
+    video_dir: Optional[str] = None,
 ) -> List[Demo]:
     """Convert a batch of H1 demonstrations to RBY1 Cartesian format.
     
@@ -603,6 +606,8 @@ def convert_h1_demos_batch(
         perturb_variants: Number of perturbation variants to generate per source demo
         perturb_seed_base: Base seed for perturbation variants
         perturb_seed_step: Step size between perturbation seeds
+        save_videos: Whether to save RGB videos for converted demos
+        video_dir: Directory to store videos (defaults to output_dir/videos)
         
     Returns:
         List of converted RBY1 Cartesian demos
@@ -621,6 +626,8 @@ def convert_h1_demos_batch(
     # Auto-generate output directory name if not provided
     if output_dir is None:
         output_dir = f"rby1_cartesian_demos_{env_name.lower()}"
+    if save_videos and video_dir is None:
+        video_dir = str(Path(output_dir) / "videos")
     
     print(f"Converting {demo_amount} H1 {env_name} demonstrations to RBY1 Cartesian format...")
     print(f"Output directory: {output_dir}")
@@ -670,31 +677,56 @@ def convert_h1_demos_batch(
         None for _ in range(total_variants)
     ]
 
+    payloads = []
+    for original_demo in original_demos:
+        variants = max(1, int(perturb_variants))
+        base_seed = perturb_seed_base if perturb_seed_base is not None else original_demo.seed
+        for variant_idx in range(variants):
+            perturb_seed = None
+            if variants > 1 or perturb_seed_base is not None:
+                perturb_seed = base_seed + variant_idx * perturb_seed_step
+            payloads.append(
+                (
+                    len(payloads),
+                    original_demo,
+                    env_name,
+                    camera_configs,
+                    control_frequency,
+                    render_mode,
+                    robot_type,
+                    blend_steps,
+                    blend_ori_steps,
+                    perturb_seed,
+                )
+            )
+
+    def _write_demo_videos(demo: Demo, demo_idx: int):
+        if not save_videos:
+            return
+        output_path = Path(video_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        for camera_config in camera_configs:
+            if not camera_config.rgb:
+                continue
+            key = f"rgb_{camera_config.name}"
+            writer = imageio.get_writer(
+                output_path / f"{env_name.lower()}_{demo_idx:03d}_{camera_config.name}.mp4",
+                fps=control_frequency,
+            )
+            try:
+                for step in demo.timesteps:
+                    frame = step.observation.get(key)
+                    if frame is None:
+                        continue
+                    if frame.shape[0] in (1, 3):
+                        frame = np.moveaxis(frame, 0, -1)
+                    writer.append_data(frame.astype(np.uint8))
+            finally:
+                writer.close()
+
     if processes > 1:
         print(f"Using multiprocessing with {processes} processes")
         ctx = mp.get_context("spawn")
-        payloads = []
-        for i, original_demo in enumerate(original_demos):
-            variants = max(1, int(perturb_variants))
-            base_seed = perturb_seed_base if perturb_seed_base is not None else original_demo.seed
-            for variant_idx in range(variants):
-                perturb_seed = None
-                if variants > 1 or perturb_seed_base is not None:
-                    perturb_seed = base_seed + variant_idx * perturb_seed_step
-                payloads.append(
-                    (
-                        len(payloads),
-                        original_demo,
-                        env_name,
-                        camera_configs,
-                        control_frequency,
-                        render_mode,
-                        robot_type,
-                        blend_steps,
-                        blend_ori_steps,
-                        perturb_seed,
-                    )
-                )
         with ctx.Pool(processes=processes) as pool:
             for index, success, demo, error in tqdm(
                 pool.imap_unordered(_convert_demo_worker, payloads),
@@ -703,39 +735,31 @@ def convert_h1_demos_batch(
             ):
                 results[index] = (success, demo, error)
     else:
-        idx = 0
-        for i, original_demo in enumerate(original_demos):
-            variants = max(1, int(perturb_variants))
-            base_seed = perturb_seed_base if perturb_seed_base is not None else original_demo.seed
-            for variant_idx in range(variants):
-                perturb_seed = None
-                if variants > 1 or perturb_seed_base is not None:
-                    perturb_seed = base_seed + variant_idx * perturb_seed_step
-                print(f"\nConverting H1 demo {i+1}/{len(original_demos)} variant {variant_idx+1}/{variants}...")
-                try:
-                    rby1_demo, success = convert_h1_demo_to_rby1_cartesian(
-                        original_demo,
-                        env_class,
-                        env_name,
-                        camera_configs,
-                        control_frequency,
-                        render_mode,
-                        robot_type,
-                        blend_steps=blend_steps,
-                        blend_ori_steps=blend_ori_steps,
-                        perturb_seed=perturb_seed,
-                    )
-                    results[idx] = (success, rby1_demo, None)
-                except Exception:
-                    results[idx] = (False, None, traceback.format_exc())
-                idx += 1
+        for payload in tqdm(payloads, total=len(payloads), desc="Converting demos"):
+            index, original_demo, _, _, _, _, _, _, _, perturb_seed = payload
+            try:
+                rby1_demo, success = convert_h1_demo_to_rby1_cartesian(
+                    original_demo,
+                    env_class,
+                    env_name,
+                    camera_configs,
+                    control_frequency,
+                    render_mode,
+                    robot_type,
+                    blend_steps=blend_steps,
+                    blend_ori_steps=blend_ori_steps,
+                    perturb_seed=perturb_seed,
+                )
+                results[index] = (success, rby1_demo, None)
+            except Exception:
+                results[index] = (False, None, traceback.format_exc())
 
     success_idx = 0
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True)
     for i, result in enumerate(results):
         success, rby1_demo, error = result or (False, None, "No result returned.")
-        print(f"\nConverting H1 demo {i+1}/{len(original_demos)} to RBY1 Cartesian...")
+        print(f"\nConverting demo {i+1}/{total_variants} to RBY1 Cartesian...")
         if error:
             print(f"❌ Error converting H1 demo {i+1}:\n{error}")
             continue
@@ -748,10 +772,11 @@ def convert_h1_demos_batch(
         demo_path = output_path / f"rby1_cartesian_demo_{success_idx:03d}.safetensors"
         print(f"Saving successful RBY1 demo to {demo_path}...")
         rby1_demo.save(demo_path)
+        _write_demo_videos(rby1_demo, success_idx)
         success_idx += 1
         print("✓ Successfully saved RBY1 Cartesian demo")
     
-    print(f"\nSuccessfully converted {len(rby1_cartesian_demos)}/{len(original_demos)} H1 demonstrations to RBY1")
+    print(f"\nSuccessfully converted {len(rby1_cartesian_demos)}/{total_variants} H1 demonstrations to RBY1")
     return rby1_cartesian_demos
 
 
@@ -834,6 +859,17 @@ def main():
         help="Step between perturbation seeds"
     )
     parser.add_argument(
+        "--save-videos",
+        action="store_true",
+        help="Save RGB videos for each converted demo"
+    )
+    parser.add_argument(
+        "--video-dir",
+        type=str,
+        default=None,
+        help="Output directory for videos (defaults to output_dir/videos)"
+    )
+    parser.add_argument(
         "--processes",
         type=int,
         default=1,
@@ -857,6 +893,8 @@ def main():
         perturb_variants=args.perturb_variants,
         perturb_seed_base=args.perturb_seed_base,
         perturb_seed_step=args.perturb_seed_step,
+        save_videos=args.save_videos,
+        video_dir=args.video_dir,
     )
     
     print(f"\nConversion complete! Converted {len(converted_demos)} H1 demos to RBY1 Cartesian format.")
