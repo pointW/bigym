@@ -184,8 +184,8 @@ RBY1_FINE_MANIPULATION_CONFIG = RobotConfig(
 
 
 # Small end-effector perturbation applied after reset (meters / radians)
-_EE_PERTURB_POS_RANGE = 0.05  # ±5 cm translational jitter
-_EE_PERTURB_ROT_RANGE = np.deg2rad(10.0)  # ±10° rotational jitter
+_EE_PERTURB_POS_RANGE = 0.1  # ±5 cm translational jitter
+_EE_PERTURB_ROT_RANGE = np.deg2rad(20.0)  # ±10° rotational jitter
 
 
 def _rand_unit_vec(rng: np.random.RandomState):
