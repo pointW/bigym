@@ -183,9 +183,11 @@ RBY1_FINE_MANIPULATION_CONFIG = RobotConfig(
 )
 
 
-# Small end-effector perturbation applied after reset (meters / radians)
-_EE_PERTURB_POS_RANGE = 0.1  # ±5 cm translational jitter
-_EE_PERTURB_ROT_RANGE = np.deg2rad(20.0)  # ±10° rotational jitter
+# Small perturbations applied after reset (meters / radians)
+_BASE_PERTURB_POS_RANGE = 0.1  # base XY jitter
+_BASE_PERTURB_YAW_RANGE = np.deg2rad(20.0)  # base yaw jitter
+_EE_PERTURB_POS_RANGE = 0.1  # end-effector translational jitter
+_EE_PERTURB_ROT_RANGE = np.deg2rad(20.0)  # end-effector rotational jitter
 
 
 def _rand_unit_vec(rng: np.random.RandomState):
@@ -211,7 +213,111 @@ def _rby1_perturb_enabled() -> bool:
     return value not in {"1", "true", "yes", "on"}
 
 
-def _perturb_rby1_end_effectors(mojo, pos_range: float, rot_range: float):
+def _make_rby1_perturb_rng():
+    rng_state = np.random.get_state()
+    seed_value = os.getenv("RBY1_PERTURB_SEED")
+    if seed_value is not None:
+        try:
+            rng = np.random.RandomState(int(seed_value))
+        except ValueError:
+            rng = np.random.RandomState()
+            rng.set_state(rng_state)
+    else:
+        rng = np.random.RandomState()
+        rng.set_state(rng_state)
+    return rng, rng_state
+
+
+def _restore_rby1_rng_state(rng_state):
+    # Restore RNG state so task randomization stays consistent.
+    np.random.set_state(rng_state)
+
+
+def _perturb_rby1_base(
+    mojo,
+    pos_range: float,
+    yaw_range: float,
+    rng: np.random.RandomState,
+):
+    """Apply a small XY/yaw perturbation to the mobile base."""
+
+    if mojo is None or not getattr(mojo, "physics", None):
+        return
+
+    physics = mojo.physics
+    model = physics.model._model
+    data = physics.data._data
+
+    root_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "rby1/")
+    base_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "rby1/base")
+    if base_body_id < 0:
+        base_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base")
+    if root_body_id < 0 and base_body_id < 0:
+        logging.debug("Skipping RBY1 base perturbation (base body not found)")
+        return
+
+    free_qpos_adr = None
+    for body_id in (root_body_id, base_body_id):
+        if body_id < 0:
+            continue
+        jnt_adr = model.body_jntadr[body_id]
+        jnt_num = model.body_jntnum[body_id]
+        for j in range(jnt_adr, jnt_adr + jnt_num):
+            if model.jnt_type[j] == mujoco.mjtJoint.mjJNT_FREE:
+                free_qpos_adr = model.jnt_qposadr[j]
+                break
+        if free_qpos_adr is not None:
+            break
+
+    if free_qpos_adr is not None:
+        base_pos = np.array(data.qpos[free_qpos_adr : free_qpos_adr + 3], dtype=np.float64)
+        base_quat = np.array(
+            data.qpos[free_qpos_adr + 3 : free_qpos_adr + 7], dtype=np.float64
+        )
+    else:
+        base_pos = np.array(data.xpos[base_body_id], dtype=np.float64)
+        base_quat = np.zeros(4, dtype=np.float64)
+        mujoco.mju_mat2Quat(base_quat, data.xmat[base_body_id])
+
+    delta_xy = rng.uniform(-pos_range, pos_range, size=2)
+    delta_yaw = rng.uniform(-yaw_range, yaw_range)
+
+    new_pos = base_pos.copy()
+    new_pos[0] += delta_xy[0]
+    new_pos[1] += delta_xy[1]
+
+    delta_quat = np.array(
+        [np.cos(delta_yaw / 2.0), 0.0, 0.0, np.sin(delta_yaw / 2.0)],
+        dtype=np.float64,
+    )
+    new_quat = np.zeros(4, dtype=np.float64)
+    mujoco.mju_mulQuat(new_quat, delta_quat, base_quat)
+
+    if free_qpos_adr is not None:
+        data.qpos[free_qpos_adr : free_qpos_adr + 3] = new_pos
+        data.qpos[free_qpos_adr + 3 : free_qpos_adr + 7] = new_quat
+
+    base_target_body_id = mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_BODY, "base_target"
+    )
+    if base_target_body_id >= 0:
+        mocap_id = model.body_mocapid[base_target_body_id]
+        if mocap_id >= 0:
+            data.mocap_pos[mocap_id][:] = new_pos
+            data.mocap_quat[mocap_id][:] = new_quat
+
+    data.qvel[:] = 0.0
+    data.qacc[:] = 0.0
+    mujoco.mj_forward(model, data)
+
+
+def _perturb_rby1_end_effectors(
+    mojo,
+    pos_range: float,
+    rot_range: float,
+    rng: np.random.RandomState | None = None,
+    restore_state: bool = True,
+):
     """Apply a small SE(3) perturbation to both end effectors via IK.
 
     Keeps the robot in a valid configuration while slightly moving wrists.
@@ -246,17 +352,10 @@ def _perturb_rby1_end_effectors(mojo, pos_range: float, rot_range: float):
         logging.debug("Skipping RBY1 EE perturbation (site lookup failed): %s", exc)
         return
 
-    rng_state = np.random.get_state()
-    seed_value = os.getenv("RBY1_PERTURB_SEED")
-    if seed_value is not None:
-        try:
-            rng = np.random.RandomState(int(seed_value))
-        except ValueError:
-            rng = np.random.RandomState()
-            rng.set_state(rng_state)
+    if rng is None:
+        rng, rng_state = _make_rby1_perturb_rng()
     else:
-        rng = np.random.RandomState()
-        rng.set_state(rng_state)
+        rng_state = None
 
     try:
         def _perturb_pose(pos: np.ndarray, quat: np.ndarray):
@@ -292,8 +391,8 @@ def _perturb_rby1_end_effectors(mojo, pos_range: float, rot_range: float):
         data.qacc[:] = 0.0
         mujoco.mj_forward(model, data)
     finally:
-        # Restore RNG state so task randomization stays consistent.
-        np.random.set_state(rng_state)
+        if restore_state and rng_state is not None:
+            _restore_rby1_rng_state(rng_state)
 
     # Keep base_target mocap aligned with the updated base pose.
     base_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "rby1/base")
@@ -455,11 +554,23 @@ class RBY1(Robot):
         super().reset(position, orientation)
         _apply_head_default_posture(self._mojo)
         if _rby1_perturb_enabled():
-            _perturb_rby1_end_effectors(
-                self._mojo,
-                pos_range=_EE_PERTURB_POS_RANGE,
-                rot_range=_EE_PERTURB_ROT_RANGE,
-            )
+            rng, rng_state = _make_rby1_perturb_rng()
+            try:
+                _perturb_rby1_base(
+                    self._mojo,
+                    pos_range=_BASE_PERTURB_POS_RANGE,
+                    yaw_range=_BASE_PERTURB_YAW_RANGE,
+                    rng=rng,
+                )
+                _perturb_rby1_end_effectors(
+                    self._mojo,
+                    pos_range=_EE_PERTURB_POS_RANGE,
+                    rot_range=_EE_PERTURB_ROT_RANGE,
+                    rng=rng,
+                    restore_state=False,
+                )
+            finally:
+                _restore_rby1_rng_state(rng_state)
 
     @property
     def config(self) -> RobotConfig:
@@ -619,11 +730,23 @@ class RBY1FineManipulation(Robot):
         super().reset(position, orientation)
         _apply_head_default_posture(self._mojo)
         if _rby1_perturb_enabled():
-            _perturb_rby1_end_effectors(
-                self._mojo,
-                pos_range=_EE_PERTURB_POS_RANGE,
-                rot_range=_EE_PERTURB_ROT_RANGE,
-            )
+            rng, rng_state = _make_rby1_perturb_rng()
+            try:
+                _perturb_rby1_base(
+                    self._mojo,
+                    pos_range=_BASE_PERTURB_POS_RANGE,
+                    yaw_range=_BASE_PERTURB_YAW_RANGE,
+                    rng=rng,
+                )
+                _perturb_rby1_end_effectors(
+                    self._mojo,
+                    pos_range=_EE_PERTURB_POS_RANGE,
+                    rot_range=_EE_PERTURB_ROT_RANGE,
+                    rng=rng,
+                    restore_state=False,
+                )
+            finally:
+                _restore_rby1_rng_state(rng_state)
     
     @property
     def config(self) -> RobotConfig:
