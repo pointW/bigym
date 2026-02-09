@@ -38,3 +38,5 @@ tmp/
 rby1/
 rby1_cartesian_demos_reachtarget/
 rby1_cartesian_demos_moveplate/
+
+venv/

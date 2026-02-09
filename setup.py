@@ -27,9 +27,9 @@ core_requirements = [
     "numpy==1.26.*",
     "safetensors==0.3.3",
     # WARNING: recorded demos might break when updating Mujoco
-    "mujoco==3.1.5",
+    "mujoco",
     # needed for pyMJCF
-    "dm_control==1.0.19",
+    "dm_control",
     "imageio",
     "pyquaternion",
     "mujoco_utils",
@@ -38,6 +38,7 @@ core_requirements = [
     "pyyaml",
     "dearpygui",
     "pyopenxr",
+    "mink"
 ]
 
 setuptools.setup(
