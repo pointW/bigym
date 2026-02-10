@@ -9,6 +9,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
+import mujoco
 import imageio.v2 as imageio
 from pathlib import Path
 from typing import List, Type, Optional, Dict, Any, Tuple
@@ -33,6 +34,105 @@ from demonstrations.demo import Demo, DemoStep
 from bigym.robots.configs.h1 import H1
 from bigym.robots.configs.rby1 import RBY1
 from bigym.action_modes import PelvisDof
+
+
+PCD_KEY_MAP = {
+    "head": "pcd_head",
+    "left_wrist": "pcd_left_wrist",
+    "right_wrist": "pcd_right_wrist",
+}
+
+
+def _get_camera_fovy_deg(model, cam_id: int) -> float:
+    fovy = float(model.cam_fovy[cam_id])
+    if fovy <= 0:
+        fovy = float(model.vis.global_.fovy)
+    return fovy
+
+
+def _camera_intrinsics_from_fovy(
+    fovy_deg: float, width: int, height: int
+) -> Tuple[float, float, float, float]:
+    fovy_rad = np.deg2rad(fovy_deg)
+    fy = 0.5 * float(height) / np.tan(fovy_rad / 2.0)
+    fovx = 2.0 * np.arctan(np.tan(fovy_rad / 2.0) * (float(width) / float(height)))
+    fx = 0.5 * float(width) / np.tan(fovx / 2.0)
+    cx = (float(width) - 1.0) * 0.5
+    cy = (float(height) - 1.0) * 0.5
+    return fx, fy, cx, cy
+
+
+def _depth_rgb_to_world_pcd(
+    depth: np.ndarray,
+    rgb: np.ndarray,
+    cam_xpos: np.ndarray,
+    cam_xmat: np.ndarray,
+    fovy_deg: float,
+    n_points: int,
+    rng: np.random.Generator,
+    min_dist: Optional[float] = None,
+    max_dist: Optional[float] = None,
+) -> np.ndarray:
+    if depth is None or rgb is None:
+        return np.zeros((n_points, 6), dtype=np.float32)
+
+    depth = np.asarray(depth)
+    if depth.ndim != 2:
+        raise ValueError(f"Expected depth image (H,W), got {depth.shape}")
+
+    if rgb.ndim == 3 and rgb.shape[0] in (1, 3):
+        rgb_img = np.moveaxis(rgb, 0, -1)
+    else:
+        rgb_img = rgb
+
+    height, width = depth.shape
+    fx, fy, cx, cy = _camera_intrinsics_from_fovy(fovy_deg, width, height)
+
+    xs, ys = np.meshgrid(np.arange(width), np.arange(height))
+    mask = np.isfinite(depth) & (depth > 0)
+    if not np.any(mask):
+        return np.zeros((n_points, 6), dtype=np.float32)
+
+    z = depth[mask].astype(np.float32)
+    x = (xs[mask].astype(np.float32) - cx) * z / fx
+    y = (ys[mask].astype(np.float32) - cy) * z / fy
+    pts_cam = np.stack([x, y, z], axis=1)
+    # MuJoCo camera frame correction (flip Y and Z)
+    pts_cam[:, 1] *= -1.0
+    pts_cam[:, 2] *= -1.0
+
+    if min_dist is not None or max_dist is not None:
+        dist = np.linalg.norm(pts_cam, axis=1)
+        keep = np.ones(dist.shape[0], dtype=bool)
+        if min_dist is not None:
+            keep &= dist >= float(min_dist)
+        if max_dist is not None:
+            keep &= dist <= float(max_dist)
+        if not np.any(keep):
+            return np.zeros((n_points, 6), dtype=np.float32)
+        pts_cam = pts_cam[keep]
+        mask_idx = np.flatnonzero(mask)[keep]
+    else:
+        mask_idx = np.flatnonzero(mask)
+
+    R = cam_xmat.reshape(3, 3)
+    pts_world = pts_cam @ R.T + cam_xpos.reshape(1, 3)
+
+    colors = rgb_img.reshape(-1, rgb_img.shape[-1])[mask_idx].astype(np.float32)
+    if colors.size == 0:
+        colors = np.zeros((pts_world.shape[0], 3), dtype=np.float32)
+    if colors.max() > 1.0:
+        colors = colors / 255.0
+    if colors.shape[1] != 3:
+        colors = colors[:, :3]
+
+    total = pts_world.shape[0]
+    replace = total < n_points
+    idx = rng.choice(total, size=n_points, replace=replace)
+    pts_world = pts_world[idx]
+    colors = colors[idx]
+
+    return np.concatenate([pts_world, colors], axis=1).astype(np.float32)
 
 
 def detect_floating_dofs_from_demos(env_name: str) -> List[PelvisDof]:
@@ -367,6 +467,12 @@ def convert_h1_demo_to_rby1_cartesian(
     blend_steps: int = 0,
     blend_ori_steps: Optional[int] = None,
     perturb_seed: Optional[int] = None,
+    enable_perturb: bool = False,
+    with_pointcloud: bool = True,
+    pcd_points: int = 1024,
+    pcd_keep_depth: bool = True,
+    pcd_min_dist: Optional[float] = None,
+    pcd_max_dist: Optional[float] = None,
 ) -> Tuple[Demo, bool]:
     """Convert a single H1 joint demo to RBY1 Cartesian demo.
     
@@ -381,14 +487,26 @@ def convert_h1_demo_to_rby1_cartesian(
         blend_steps: Number of initial steps to blend from perturbed pose
         blend_ori_steps: Steps to blend orientation (defaults to blend_steps)
         perturb_seed: Optional seed for RBY1 EE perturbation
+        enable_perturb: If True, enable RBY1 reset perturbation (default disabled)
+        with_pointcloud: If True, generate point clouds from depth + rgb
+        pcd_points: Number of points to sample per camera
+        pcd_keep_depth: Keep depth images in observations
+        pcd_min_dist: Minimum camera distance (meters) to keep points
+        pcd_max_dist: Maximum camera distance (meters) to keep points
         
     Returns:
         Tuple of (converted demo, success flag from RBY1 rollout)
     """
     # Get the actions from the original demo
     joint_actions = np.array([step.executed_action for step in original_demo.timesteps])
-    
+
     cartesian_actions = []
+
+    if with_pointcloud:
+        camera_configs = [CameraConfig(**vars(cam)) for cam in camera_configs]
+        for cam in camera_configs:
+            cam.rgb = True
+            cam.depth = True
     
     # Detect the correct floating DOFs for this environment
     floating_dofs = detect_floating_dofs_from_demos(env_name)
@@ -468,6 +586,12 @@ def convert_h1_demo_to_rby1_cartesian(
         robot_cls=RBY1,
     )
     
+    prev_disable_perturb = os.getenv("RBY1_DISABLE_PERTURB")
+    if enable_perturb:
+        os.environ.pop("RBY1_DISABLE_PERTURB", None)
+    else:
+        os.environ["RBY1_DISABLE_PERTURB"] = "1"
+
     prev_perturb_seed = os.getenv("RBY1_PERTURB_SEED")
     if perturb_seed is None:
         os.environ.pop("RBY1_PERTURB_SEED", None)
@@ -481,8 +605,32 @@ def convert_h1_demo_to_rby1_cartesian(
             os.environ.pop("RBY1_PERTURB_SEED", None)
         else:
             os.environ["RBY1_PERTURB_SEED"] = prev_perturb_seed
+        if prev_disable_perturb is None:
+            os.environ.pop("RBY1_DISABLE_PERTURB", None)
+        else:
+            os.environ["RBY1_DISABLE_PERTURB"] = prev_disable_perturb
 
-    
+    pcd_rng: Optional[np.random.Generator] = None
+    pcd_cam_params: Dict[str, Tuple[int, float]] = {}
+    if with_pointcloud:
+        pcd_rng = np.random.default_rng(int(original_demo.seed))
+        model = rby1_env._mojo.physics.model._model
+        for cam in camera_configs:
+            cam_id = -1
+            try:
+                cam_entry = rby1_env._cameras_map.get(cam.name)
+                if cam_entry is not None:
+                    cam_id = cam_entry[0]
+            except Exception:
+                cam_id = -1
+            if cam_id < 0:
+                cam_id = mujoco.mj_name2id(
+                    model, mujoco.mjtObj.mjOBJ_CAMERA, cam.name
+                )
+            if cam_id < 0:
+                continue
+            pcd_cam_params[cam.name] = (cam_id, _get_camera_fovy_deg(model, cam_id))
+
     timesteps: list[DemoStep] = []
     last_info: Dict[str, Any] = {}
     for step_idx, cartesian_action in enumerate(cartesian_actions):
@@ -503,6 +651,42 @@ def convert_h1_demo_to_rby1_cartesian(
         )
         obs, reward, terminated, truncated, info = rby1_env.step(clipped_action)
         rby1_obs = obs
+        if with_pointcloud and pcd_rng is not None:
+            data = rby1_env._mojo.physics.data._data
+            for cam in camera_configs:
+                if not cam.depth:
+                    continue
+                depth_key = f"depth_{cam.name}"
+                rgb_key = f"rgb_{cam.name}"
+                depth = obs.get(depth_key)
+                rgb = obs.get(rgb_key)
+                if depth is None or rgb is None:
+                    continue
+                cam_id, fovy = pcd_cam_params.get(cam.name, (-1, 0.0))
+                if cam_id < 0:
+                    continue
+                cam_xpos = np.array(data.cam_xpos[cam_id])
+                cam_xmat = np.array(data.cam_xmat[cam_id])
+                pcd = _depth_rgb_to_world_pcd(
+                    depth=depth,
+                    rgb=rgb,
+                    cam_xpos=cam_xpos,
+                    cam_xmat=cam_xmat,
+                    fovy_deg=fovy,
+                    n_points=pcd_points,
+                    rng=pcd_rng,
+                    min_dist=pcd_min_dist,
+                    max_dist=pcd_max_dist,
+                )
+                pcd_key = PCD_KEY_MAP.get(cam.name)
+                if pcd_key is None:
+                    continue
+                obs[pcd_key] = pcd
+                if not pcd_keep_depth:
+                    obs.pop(depth_key, None)
+        elif with_pointcloud and not pcd_keep_depth:
+            for cam in camera_configs:
+                obs.pop(f"depth_{cam.name}", None)
         info = info or {}
         last_info = info
         timesteps.append(
@@ -538,6 +722,12 @@ def _convert_demo_worker(
         int,
         Optional[int],
         Optional[int],
+        bool,
+        bool,
+        int,
+        bool,
+        Optional[float],
+        Optional[float],
     ]
 ) -> Tuple[int, bool, Optional[Demo], Optional[str]]:
     """Worker for multiprocessing demo conversion."""
@@ -552,6 +742,12 @@ def _convert_demo_worker(
         blend_steps,
         blend_ori_steps,
         perturb_seed,
+        enable_perturb,
+        with_pointcloud,
+        pcd_points,
+        pcd_keep_depth,
+        pcd_min_dist,
+        pcd_max_dist,
     ) = payload
     try:
         env_class = get_environment_class(env_name)
@@ -565,7 +761,13 @@ def _convert_demo_worker(
             robot_type,
             blend_steps=blend_steps,
             blend_ori_steps=blend_ori_steps,
-        perturb_seed=perturb_seed,
+            perturb_seed=perturb_seed,
+            enable_perturb=enable_perturb,
+            with_pointcloud=with_pointcloud,
+            pcd_points=pcd_points,
+            pcd_keep_depth=pcd_keep_depth,
+            pcd_min_dist=pcd_min_dist,
+            pcd_max_dist=pcd_max_dist,
         )
         return index, success, rby1_demo, None
     except Exception:
@@ -574,7 +776,7 @@ def _convert_demo_worker(
 
 def convert_h1_demos_batch(
     env_name: str,
-    demo_amount: int = 3,
+    demo_amount: int = -1,
     output_dir: str = None,
     camera_configs: Optional[List[CameraConfig]] = None,
     control_frequency: int = 50,
@@ -589,6 +791,12 @@ def convert_h1_demos_batch(
     perturb_seed_step: int = 1,
     save_videos: bool = False,
     video_dir: Optional[str] = None,
+    enable_perturb: bool = False,
+    with_pointcloud: bool = True,
+    pcd_points: int = 1024,
+    pcd_keep_depth: bool = True,
+    pcd_min_dist: Optional[float] = None,
+    pcd_max_dist: Optional[float] = None,
 ) -> List[Demo]:
     """Convert a batch of H1 demonstrations to RBY1 Cartesian format.
     
@@ -608,6 +816,12 @@ def convert_h1_demos_batch(
         perturb_seed_step: Step size between perturbation seeds
         save_videos: Whether to save RGB videos for converted demos
         video_dir: Directory to store videos (defaults to output_dir/videos)
+        enable_perturb: If True, enable RBY1 reset perturbation (default disabled)
+        with_pointcloud: If True, generate point clouds from depth + rgb
+        pcd_points: Number of points to sample per camera
+        pcd_keep_depth: Keep depth images in observations
+        pcd_min_dist: Minimum camera distance (meters) to keep points
+        pcd_max_dist: Maximum camera distance (meters) to keep points
         
     Returns:
         List of converted RBY1 Cartesian demos
@@ -622,6 +836,11 @@ def convert_h1_demos_batch(
             CameraConfig("left_wrist", resolution=(84, 84)),
             CameraConfig("right_wrist", resolution=(84, 84)),
         ]
+    if with_pointcloud:
+        camera_configs = [CameraConfig(**vars(cam)) for cam in camera_configs]
+        for cam in camera_configs:
+            cam.rgb = True
+            cam.depth = True
     
     # Auto-generate output directory name if not provided
     if output_dir is None:
@@ -697,6 +916,12 @@ def convert_h1_demos_batch(
                     blend_steps,
                     blend_ori_steps,
                     perturb_seed,
+                    enable_perturb,
+                    with_pointcloud,
+                    pcd_points,
+                    pcd_keep_depth,
+                    pcd_min_dist,
+                    pcd_max_dist,
                 )
             )
 
@@ -736,7 +961,24 @@ def convert_h1_demos_batch(
                 results[index] = (success, demo, error)
     else:
         for payload in tqdm(payloads, total=len(payloads), desc="Converting demos"):
-            index, original_demo, _, _, _, _, _, _, _, perturb_seed = payload
+            (
+                index,
+                original_demo,
+                _,
+                _,
+                _,
+                _,
+                _,
+                _,
+                _,
+                perturb_seed,
+                enable_perturb,
+                with_pointcloud,
+                pcd_points,
+                pcd_keep_depth,
+                pcd_min_dist,
+                pcd_max_dist,
+            ) = payload
             try:
                 rby1_demo, success = convert_h1_demo_to_rby1_cartesian(
                     original_demo,
@@ -749,6 +991,12 @@ def convert_h1_demos_batch(
                     blend_steps=blend_steps,
                     blend_ori_steps=blend_ori_steps,
                     perturb_seed=perturb_seed,
+                    enable_perturb=enable_perturb,
+                    with_pointcloud=with_pointcloud,
+                    pcd_points=pcd_points,
+                    pcd_keep_depth=pcd_keep_depth,
+                    pcd_min_dist=pcd_min_dist,
+                    pcd_max_dist=pcd_max_dist,
                 )
                 results[index] = (success, rby1_demo, None)
             except Exception:
@@ -796,8 +1044,8 @@ def main():
     parser.add_argument(
         "--max-demos", 
         type=int, 
-        default=60, 
-        help="Maximum number of demos to convert"
+        default=-1, 
+        help="Maximum number of demos to convert (-1 for all)"
     )
     parser.add_argument(
         "--output-dir", 
@@ -859,6 +1107,11 @@ def main():
         help="Step between perturbation seeds"
     )
     parser.add_argument(
+        "--enable-perturb",
+        action="store_true",
+        help="Enable RBY1 reset perturbation (default: disabled)"
+    )
+    parser.add_argument(
         "--save-videos",
         action="store_true",
         help="Save RGB videos for each converted demo"
@@ -874,6 +1127,34 @@ def main():
         type=int,
         default=1,
         help="Number of worker processes to use"
+    )
+    parser.add_argument(
+        "--no-pointcloud",
+        action="store_true",
+        help="Disable point cloud generation (default is enabled)"
+    )
+    parser.add_argument(
+        "--pcd-points",
+        type=int,
+        default=1024,
+        help="Number of points to sample per camera for point clouds"
+    )
+    parser.add_argument(
+        "--pcd-min-dist",
+        type=float,
+        default=None,
+        help="Minimum camera distance (meters) to keep points"
+    )
+    parser.add_argument(
+        "--pcd-max-dist",
+        type=float,
+        default=None,
+        help="Maximum camera distance (meters) to keep points"
+    )
+    parser.add_argument(
+        "--pcd-drop-depth",
+        action="store_true",
+        help="Drop depth images from observations after point cloud generation"
     )
     
     args = parser.parse_args()
@@ -895,6 +1176,12 @@ def main():
         perturb_seed_step=args.perturb_seed_step,
         save_videos=args.save_videos,
         video_dir=args.video_dir,
+        enable_perturb=args.enable_perturb,
+        with_pointcloud=not args.no_pointcloud,
+        pcd_points=args.pcd_points,
+        pcd_keep_depth=not args.pcd_drop_depth,
+        pcd_min_dist=args.pcd_min_dist,
+        pcd_max_dist=args.pcd_max_dist,
     )
     
     print(f"\nConversion complete! Converted {len(converted_demos)} H1 demos to RBY1 Cartesian format.")
