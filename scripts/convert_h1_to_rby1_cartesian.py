@@ -50,6 +50,39 @@ def _get_camera_fovy_deg(model, cam_id: int) -> float:
     return fovy
 
 
+def _resolve_camera_id(model, env, camera_name: str) -> int:
+    """
+    Resolve camera id robustly across namespaced / non-namespaced model names.
+    """
+    cam_map = getattr(env, "_cameras_map", {}) or {}
+
+    for key in (camera_name, f"rby1/{camera_name}", f"h1/{camera_name}"):
+        entry = cam_map.get(key)
+        if entry is not None:
+            try:
+                cam_id = int(entry[0])
+            except Exception:
+                cam_id = -1
+            if cam_id >= 0:
+                return cam_id
+
+    for key in (camera_name, f"rby1/{camera_name}", f"h1/{camera_name}"):
+        try:
+            cam_id = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, key))
+        except Exception:
+            cam_id = -1
+        if cam_id >= 0:
+            return cam_id
+
+    # Final fallback: find camera whose name suffix matches camera_name.
+    for cam_id in range(model.ncam):
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_CAMERA, cam_id)
+        if name == camera_name or (name and name.endswith(f"/{camera_name}")):
+            return int(cam_id)
+
+    return -1
+
+
 def _camera_intrinsics_from_fovy(
     fovy_deg: float, width: int, height: int
 ) -> Tuple[float, float, float, float]:
@@ -637,19 +670,16 @@ def convert_h1_demo_to_rby1_cartesian(
         pcd_rng = np.random.default_rng(int(original_demo.seed))
         model = rby1_env._mojo.physics.model._model
         for cam in camera_configs:
-            cam_id = -1
-            try:
-                cam_entry = rby1_env._cameras_map.get(cam.name)
-                if cam_entry is not None:
-                    cam_id = cam_entry[0]
-            except Exception:
-                cam_id = -1
+            cam_id = _resolve_camera_id(model=model, env=rby1_env, camera_name=cam.name)
             if cam_id < 0:
-                cam_id = mujoco.mj_name2id(
-                    model, mujoco.mjtObj.mjOBJ_CAMERA, cam.name
+                model_cam_names = [
+                    mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_CAMERA, i)
+                    for i in range(model.ncam)
+                ]
+                raise ValueError(
+                    f"Failed to resolve camera '{cam.name}' for pointcloud generation. "
+                    f"Available model cameras: {model_cam_names}"
                 )
-            if cam_id < 0:
-                continue
             pcd_cam_params[cam.name] = (cam_id, _get_camera_fovy_deg(model, cam_id))
 
     timesteps: list[DemoStep] = []
@@ -682,10 +712,16 @@ def convert_h1_demo_to_rby1_cartesian(
                 depth = obs.get(depth_key)
                 rgb = obs.get(rgb_key)
                 if depth is None or rgb is None:
-                    continue
+                    raise KeyError(
+                        f"Missing '{depth_key}' or '{rgb_key}' in observation keys {list(obs.keys())}. "
+                        f"Camera namespace/config mismatch for '{cam.name}'."
+                    )
                 cam_id, fovy = pcd_cam_params.get(cam.name, (-1, 0.0))
                 if cam_id < 0:
-                    continue
+                    raise ValueError(
+                        f"Unresolved camera id for '{cam.name}'. "
+                        "Pointcloud camera namespace mapping is inconsistent."
+                    )
                 cam_xpos = np.array(data.cam_xpos[cam_id])
                 cam_xmat = np.array(data.cam_xmat[cam_id])
                 pcd = _depth_rgb_to_world_pcd(

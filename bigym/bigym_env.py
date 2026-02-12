@@ -131,6 +131,7 @@ class BiGymEnv(gym.Env):
         self.obs_renderers: Optional[dict[tuple[int, int], mujoco.Renderer]] = {}
         self._initialize_renderers()
         self._rby1_head_site_id: Optional[int] = None
+        self._rby1_base_body_id: Optional[int] = None
 
     @property
     def task_name(self) -> str:
@@ -327,6 +328,18 @@ class BiGymEnv(gym.Env):
                             shape=(4,),
                             dtype=np.float32,
                         ),
+                        "base_pos": spaces.Box(
+                            low=-np.inf,
+                            high=np.inf,
+                            shape=(3,),
+                            dtype=np.float32,
+                        ),
+                        "base_quat": spaces.Box(
+                            low=-1.0,
+                            high=1.0,
+                            shape=(4,),
+                            dtype=np.float32,
+                        ),
                     }
                 )
         if self._use_pixels:
@@ -391,6 +404,7 @@ class BiGymEnv(gym.Env):
         if isinstance(self.robot, RBY1):
             obs |= self._get_rby1_end_effector_obs()
             obs |= self._get_rby1_head_pose_obs()
+            obs |= self._get_rby1_base_pose_obs()
         return obs
 
     def _get_rby1_end_effector_obs(self) -> dict[str, np.ndarray]:
@@ -423,14 +437,80 @@ class BiGymEnv(gym.Env):
             "head_site_quat": quat.astype(np.float32),
         }
 
+    def _get_rby1_base_pose_obs(self) -> dict[str, np.ndarray]:
+        """Collect the base body pose in world frame."""
+        body_id = self._get_rby1_base_body_id()
+        if body_id is None or body_id < 0:
+            return {}
+        data = self._mojo.physics.data._data
+        base_pos = np.array(data.xpos[body_id], dtype=np.float32)
+        # MuJoCo uses wxyz quaternion ordering.
+        base_quat = np.array(data.xquat[body_id], dtype=np.float32)
+        return {
+            "base_pos": base_pos,
+            "base_quat": base_quat,
+        }
+
     def _get_rby1_head_site_id(self) -> Optional[int]:
         """Resolve the MuJoCo site id for the robot head (cached)."""
         if self._rby1_head_site_id is None:
             model = self._mojo.physics.model._model
-            self._rby1_head_site_id = mujoco.mj_name2id(
-                        model, mujoco.mjtObj.mjOBJ_SITE, "rby1/head"
-            )
+            for site_name in ("rby1/head", "head"):
+                try:
+                    site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, site_name)
+                except Exception:
+                    site_id = -1
+                if site_id >= 0:
+                    self._rby1_head_site_id = int(site_id)
+                    break
+            if self._rby1_head_site_id is None:
+                # Fallback: namespace-agnostic suffix match.
+                for site_id in range(model.nsite):
+                    name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_SITE, site_id)
+                    if name == "head" or (name and name.endswith("/head")):
+                        self._rby1_head_site_id = int(site_id)
+                        break
+            if self._rby1_head_site_id is None:
+                self._rby1_head_site_id = -1
         return self._rby1_head_site_id
+
+    def _get_rby1_base_body_id(self) -> Optional[int]:
+        """Resolve the MuJoCo body id for the robot base (cached)."""
+        if self._rby1_base_body_id is None:
+            model = self._mojo.physics.model._model
+            pelvis_name = str(getattr(self.robot.config, "pelvis_body", "base"))
+            candidates = [pelvis_name]
+            if "/" not in pelvis_name:
+                candidates.extend([f"rby1/{pelvis_name}", f"h1/{pelvis_name}"])
+            candidates.extend(["rby1/base", "base", "rby1/"])
+
+            seen = set()
+            for body_name in candidates:
+                if body_name in seen:
+                    continue
+                seen.add(body_name)
+                try:
+                    body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+                except Exception:
+                    body_id = -1
+                if body_id >= 0:
+                    self._rby1_base_body_id = int(body_id)
+                    break
+
+            if self._rby1_base_body_id is None:
+                # Fallback: namespace-agnostic suffix match.
+                for body_id in range(model.nbody):
+                    name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_id)
+                    if name == pelvis_name or (name and name.endswith(f"/{pelvis_name}")):
+                        self._rby1_base_body_id = int(body_id)
+                        break
+
+            if self._rby1_base_body_id is None:
+                raise RuntimeError(
+                    "Failed to resolve RBY1 base body id for base pose observations. "
+                    f"pelvis_body='{pelvis_name}'"
+                )
+        return self._rby1_base_body_id
 
     def _get_visual_obs(self) -> dict[str, Any]:
         """Get the visual observation."""
