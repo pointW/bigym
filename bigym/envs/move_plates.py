@@ -1,5 +1,6 @@
 """Set of plate moving tasks."""
 from abc import ABC
+import os
 
 import numpy as np
 from gymnasium import spaces
@@ -13,7 +14,12 @@ from bigym.envs.props.tables import Table
 from bigym.utils.physics_utils import distance
 
 
-# Position / orientation randomization ranges for reset.
+# Legacy reset distribution (used before commit e624aa8).
+LEGACY_RACK_BOUNDS = np.array([0.05, 0.05, 0.0])
+LEGACY_RACK_POSITION_LEFT = np.array([0.7, 0.3, 0.95])
+LEGACY_RACK_POSITION_RIGHT = np.array([0.7, -0.3, 0.95])
+
+# Enhanced reset distribution (default).
 # Values chosen to increase variation while staying within a reasonable range for asset sizes.
 RACK_BOUNDS = np.array([0.12, 0.12, 0.0])  # XY jitter for rack placement (meters)
 RACK_YAW_BOUNDS = np.deg2rad(25)  # Rack yaw jitter (radians)
@@ -21,6 +27,12 @@ TABLE_Z_BOUNDS = 0.1  # Table height jitter (meters)
 
 PLATE_OFFSET_POS = np.array([0, 0.01, 0])
 PLATE_OFFSET_ROT = Quaternion(axis=[1, 0, 0], degrees=-5).elements
+
+
+def _bigym_perturb_enabled() -> bool:
+    """Return True if Bigym task reset perturbation is enabled."""
+    value = os.getenv("BIGYM_DISABLE_PERTURB", "0").strip().lower()
+    return value not in {"1", "true", "yes", "on"}
 
 
 class _MovePlatesEnv(BiGymEnv, ABC):
@@ -78,26 +90,32 @@ class _MovePlatesEnv(BiGymEnv, ABC):
         return False
 
     def _on_reset(self):
-        table_z_offset = np.random.uniform(-TABLE_Z_BOUNDS, TABLE_Z_BOUNDS)
-        table_pos = self._table_base_pos.copy()
-        table_pos[2] += table_z_offset
-        self.table.body.set_position(table_pos, True)
+        if not _bigym_perturb_enabled():
+            offset = np.random.uniform(-LEGACY_RACK_BOUNDS, LEGACY_RACK_BOUNDS)
+            self.rack_start.body.set_position(LEGACY_RACK_POSITION_LEFT + offset)
+            offset = np.random.uniform(-LEGACY_RACK_BOUNDS, LEGACY_RACK_BOUNDS)
+            self.rack_target.body.set_position(LEGACY_RACK_POSITION_RIGHT + offset)
+        else:
+            table_z_offset = np.random.uniform(-TABLE_Z_BOUNDS, TABLE_Z_BOUNDS)
+            table_pos = self._table_base_pos.copy()
+            table_pos[2] += table_z_offset
+            self.table.body.set_position(table_pos, True)
 
-        def _sample_rack_pose(base_pos, base_quat):
-            offset = np.random.uniform(-RACK_BOUNDS, RACK_BOUNDS)
-            pos = base_pos + offset
-            pos[2] += table_z_offset
-            yaw = np.random.uniform(-RACK_YAW_BOUNDS, RACK_YAW_BOUNDS)
-            quat = Quaternion(axis=[0, 0, 1], angle=yaw) * Quaternion(base_quat)
-            return pos, quat
+            def _sample_rack_pose(base_pos, base_quat):
+                offset = np.random.uniform(-RACK_BOUNDS, RACK_BOUNDS)
+                pos = base_pos + offset
+                pos[2] += table_z_offset
+                yaw = np.random.uniform(-RACK_YAW_BOUNDS, RACK_YAW_BOUNDS)
+                quat = Quaternion(axis=[0, 0, 1], angle=yaw) * Quaternion(base_quat)
+                return pos, quat
 
-        pos, quat = _sample_rack_pose(self._rack_start_base_pos, self._rack_start_base_quat)
-        self.rack_start.body.set_position(pos, True)
-        self.rack_start.body.set_quaternion(quat.elements, True)
+            pos, quat = _sample_rack_pose(self._rack_start_base_pos, self._rack_start_base_quat)
+            self.rack_start.body.set_position(pos, True)
+            self.rack_start.body.set_quaternion(quat.elements, True)
 
-        pos, quat = _sample_rack_pose(self._rack_target_base_pos, self._rack_target_base_quat)
-        self.rack_target.body.set_position(pos, True)
-        self.rack_target.body.set_quaternion(quat.elements, True)
+            pos, quat = _sample_rack_pose(self._rack_target_base_pos, self._rack_target_base_quat)
+            self.rack_target.body.set_position(pos, True)
+            self.rack_target.body.set_quaternion(quat.elements, True)
 
         sites = np.array(self.rack_start.sites)
         sites = np.random.choice(sites, size=len(self.plates), replace=False)

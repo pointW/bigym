@@ -487,7 +487,8 @@ def convert_h1_demo_to_rby1_cartesian(
         blend_steps: Number of initial steps to blend from perturbed pose
         blend_ori_steps: Steps to blend orientation (defaults to blend_steps)
         perturb_seed: Optional seed for RBY1 EE perturbation
-        enable_perturb: If True, enable RBY1 reset perturbation (default disabled)
+        enable_perturb: If True, enable RBY1 and task reset perturbation
+            (default disabled)
         with_pointcloud: If True, generate point clouds from depth + rgb
         pcd_points: Number of points to sample per camera
         pcd_keep_depth: Keep depth images in observations
@@ -527,8 +528,19 @@ def convert_h1_demo_to_rby1_cartesian(
         robot_cls=H1  # Use H1 robot class to replay original demo
     )
     
-    # Reset with original seed
-    h1_env.reset(seed=original_demo.seed)
+    prev_bigym_disable_perturb = os.getenv("BIGYM_DISABLE_PERTURB")
+    if enable_perturb:
+        os.environ.pop("BIGYM_DISABLE_PERTURB", None)
+    else:
+        os.environ["BIGYM_DISABLE_PERTURB"] = "1"
+    try:
+        # Reset with original seed
+        h1_env.reset(seed=original_demo.seed)
+    finally:
+        if prev_bigym_disable_perturb is None:
+            os.environ.pop("BIGYM_DISABLE_PERTURB", None)
+        else:
+            os.environ["BIGYM_DISABLE_PERTURB"] = prev_bigym_disable_perturb
     
     # Get floating base DOF count for H1
     floating_base_dof = (
@@ -591,6 +603,11 @@ def convert_h1_demo_to_rby1_cartesian(
         os.environ.pop("RBY1_DISABLE_PERTURB", None)
     else:
         os.environ["RBY1_DISABLE_PERTURB"] = "1"
+    prev_bigym_disable_perturb = os.getenv("BIGYM_DISABLE_PERTURB")
+    if enable_perturb:
+        os.environ.pop("BIGYM_DISABLE_PERTURB", None)
+    else:
+        os.environ["BIGYM_DISABLE_PERTURB"] = "1"
 
     prev_perturb_seed = os.getenv("RBY1_PERTURB_SEED")
     if perturb_seed is None:
@@ -609,6 +626,10 @@ def convert_h1_demo_to_rby1_cartesian(
             os.environ.pop("RBY1_DISABLE_PERTURB", None)
         else:
             os.environ["RBY1_DISABLE_PERTURB"] = prev_disable_perturb
+        if prev_bigym_disable_perturb is None:
+            os.environ.pop("BIGYM_DISABLE_PERTURB", None)
+        else:
+            os.environ["BIGYM_DISABLE_PERTURB"] = prev_bigym_disable_perturb
 
     pcd_rng: Optional[np.random.Generator] = None
     pcd_cam_params: Dict[str, Tuple[int, float]] = {}
@@ -816,7 +837,8 @@ def convert_h1_demos_batch(
         perturb_seed_step: Step size between perturbation seeds
         save_videos: Whether to save RGB videos for converted demos
         video_dir: Directory to store videos (defaults to output_dir/videos)
-        enable_perturb: If True, enable RBY1 reset perturbation (default disabled)
+        enable_perturb: If True, enable RBY1 and task reset perturbation
+            (default disabled)
         with_pointcloud: If True, generate point clouds from depth + rgb
         pcd_points: Number of points to sample per camera
         pcd_keep_depth: Keep depth images in observations
@@ -1109,7 +1131,7 @@ def main():
     parser.add_argument(
         "--enable-perturb",
         action="store_true",
-        help="Enable RBY1 reset perturbation (default: disabled)"
+        help="Enable RBY1 and task reset perturbation (default: disabled)"
     )
     parser.add_argument(
         "--save-videos",
