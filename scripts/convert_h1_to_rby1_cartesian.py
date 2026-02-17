@@ -489,6 +489,29 @@ def _blend_action_from_obs(
     )
 
 
+def _build_rby1_hold_action_from_obs(obs: Dict[str, np.ndarray]) -> Optional[np.ndarray]:
+    """Build a cartesian action that holds the current EE poses."""
+    left_pos = obs.get("left_ee_pos")
+    right_pos = obs.get("right_ee_pos")
+    left_quat = obs.get("left_ee_quat")
+    right_quat = obs.get("right_ee_quat")
+    if (
+        left_pos is None
+        or right_pos is None
+        or left_quat is None
+        or right_quat is None
+    ):
+        return None
+
+    left_rot6d = rotation_matrix_to_6d(Quaternion(left_quat).rotation_matrix)
+    right_rot6d = rotation_matrix_to_6d(Quaternion(right_quat).rotation_matrix)
+    gripper = np.zeros(2, dtype=np.float64)
+    return np.concatenate(
+        [left_pos, left_rot6d, right_pos, right_rot6d, gripper],
+        axis=0,
+    )
+
+
 def convert_h1_demo_to_rby1_cartesian(
     original_demo: Demo,
     env_class: Type,
@@ -506,6 +529,7 @@ def convert_h1_demo_to_rby1_cartesian(
     pcd_keep_depth: bool = True,
     pcd_min_dist: Optional[float] = None,
     pcd_max_dist: Optional[float] = None,
+    warmup_steps: int = 55,
 ) -> Tuple[Demo, bool]:
     """Convert a single H1 joint demo to RBY1 Cartesian demo.
     
@@ -527,6 +551,8 @@ def convert_h1_demo_to_rby1_cartesian(
         pcd_keep_depth: Keep depth images in observations
         pcd_min_dist: Minimum camera distance (meters) to keep points
         pcd_max_dist: Maximum camera distance (meters) to keep points
+        warmup_steps: Number of stabilization steps after RBY1 reset.
+            Warmup steps are not recorded in the output demo.
         
     Returns:
         Tuple of (converted demo, success flag from RBY1 rollout)
@@ -682,6 +708,19 @@ def convert_h1_demo_to_rby1_cartesian(
                 )
             pcd_cam_params[cam.name] = (cam_id, _get_camera_fovy_deg(model, cam_id))
 
+    warmup_steps = int(max(0, warmup_steps))
+    if warmup_steps > 0:
+        hold_action = _build_rby1_hold_action_from_obs(rby1_obs)
+        if hold_action is None:
+            hold_action = np.zeros_like(rby1_env.action_space.low, dtype=np.float64)
+        for _ in range(warmup_steps):
+            clipped_hold = np.clip(
+                hold_action,
+                rby1_env.action_space.low,
+                rby1_env.action_space.high,
+            )
+            rby1_obs, _, _, _, _ = rby1_env.step(clipped_hold)
+
     timesteps: list[DemoStep] = []
     last_info: Dict[str, Any] = {}
     for step_idx, cartesian_action in enumerate(cartesian_actions):
@@ -785,6 +824,7 @@ def _convert_demo_worker(
         bool,
         Optional[float],
         Optional[float],
+        int,
     ]
 ) -> Tuple[int, bool, Optional[Demo], Optional[str]]:
     """Worker for multiprocessing demo conversion."""
@@ -805,6 +845,7 @@ def _convert_demo_worker(
         pcd_keep_depth,
         pcd_min_dist,
         pcd_max_dist,
+        warmup_steps,
     ) = payload
     try:
         env_class = get_environment_class(env_name)
@@ -825,6 +866,7 @@ def _convert_demo_worker(
             pcd_keep_depth=pcd_keep_depth,
             pcd_min_dist=pcd_min_dist,
             pcd_max_dist=pcd_max_dist,
+            warmup_steps=warmup_steps,
         )
         return index, success, rby1_demo, None
     except Exception:
@@ -854,6 +896,7 @@ def convert_h1_demos_batch(
     pcd_keep_depth: bool = True,
     pcd_min_dist: Optional[float] = None,
     pcd_max_dist: Optional[float] = None,
+    warmup_steps: int = 55,
 ) -> List[Demo]:
     """Convert a batch of H1 demonstrations to RBY1 Cartesian format.
     
@@ -880,6 +923,7 @@ def convert_h1_demos_batch(
         pcd_keep_depth: Keep depth images in observations
         pcd_min_dist: Minimum camera distance (meters) to keep points
         pcd_max_dist: Maximum camera distance (meters) to keep points
+        warmup_steps: Number of stabilization steps after RBY1 reset.
         
     Returns:
         List of converted RBY1 Cartesian demos
@@ -980,6 +1024,7 @@ def convert_h1_demos_batch(
                     pcd_keep_depth,
                     pcd_min_dist,
                     pcd_max_dist,
+                    warmup_steps,
                 )
             )
 
@@ -1036,6 +1081,7 @@ def convert_h1_demos_batch(
                 pcd_keep_depth,
                 pcd_min_dist,
                 pcd_max_dist,
+                warmup_steps,
             ) = payload
             try:
                 rby1_demo, success = convert_h1_demo_to_rby1_cartesian(
@@ -1055,6 +1101,7 @@ def convert_h1_demos_batch(
                     pcd_keep_depth=pcd_keep_depth,
                     pcd_min_dist=pcd_min_dist,
                     pcd_max_dist=pcd_max_dist,
+                    warmup_steps=warmup_steps,
                 )
                 results[index] = (success, rby1_demo, None)
             except Exception:
@@ -1214,6 +1261,12 @@ def main():
         action="store_true",
         help="Drop depth images from observations after point cloud generation"
     )
+    parser.add_argument(
+        "--warmup-steps",
+        type=int,
+        default=55,
+        help="Number of stabilization steps after RBY1 reset (default: 55)"
+    )
     
     args = parser.parse_args()
     
@@ -1240,6 +1293,7 @@ def main():
         pcd_keep_depth=not args.pcd_drop_depth,
         pcd_min_dist=args.pcd_min_dist,
         pcd_max_dist=args.pcd_max_dist,
+        warmup_steps=args.warmup_steps,
     )
     
     print(f"\nConversion complete! Converted {len(converted_demos)} H1 demos to RBY1 Cartesian format.")
