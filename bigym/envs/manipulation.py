@@ -1,5 +1,6 @@
 """Manipulation tasks."""
 from abc import ABC
+import os
 
 import numpy as np
 from mojo.elements import Body, Geom
@@ -14,6 +15,23 @@ from bigym.envs.props.items import Cube
 from bigym.envs.props.kitchenware import Mug
 from bigym.robots.configs.h1 import H1FineManipulation
 from bigym.utils.env_utils import get_random_points_on_plane
+
+
+def _bigym_perturb_enabled() -> bool:
+    """Return True if task reset perturbation is enabled."""
+    value = os.getenv("BIGYM_DISABLE_PERTURB", "0").strip().lower()
+    return value not in {"1", "true", "yes", "on"}
+
+
+def _rotate_point_xy(point: np.ndarray, center: np.ndarray, yaw: float) -> np.ndarray:
+    """Rotate a 3D point around `center` in XY plane by yaw radians."""
+    cos_yaw = np.cos(yaw)
+    sin_yaw = np.sin(yaw)
+    rel_x, rel_y = point[0] - center[0], point[1] - center[1]
+    rotated = point.copy()
+    rotated[0] = center[0] + (cos_yaw * rel_x - sin_yaw * rel_y)
+    rotated[1] = center[1] + (sin_yaw * rel_x + cos_yaw * rel_y)
+    return rotated
 
 
 class _ManipulationEnv(BiGymEnv, ABC):
@@ -34,13 +52,26 @@ class FlipCup(_ManipulationEnv):
     _CUP_STEP = 0.1
     _CUP_POS_EXTENTS = np.array([0.1, 0.25])
     _CUP_POS_BOUNDS = np.array([0.03, 0.03, 0])
-    _CUP_ROT_BOUNDS = np.deg2rad(30)
+    _CUP_ROT_BOUNDS = np.pi
+    # Enhanced reset distribution for perturb mode:
+    # shift center toward the counter center and cover most of the tabletop
+    # while keeping margin from edges to avoid frequent falls.
+    _CUP_POS_EXTENTS_ENHANCED = np.array([0.26, 0.26])
+    _CUP_POS_BOUNDS_ENHANCED = np.array([0.03, 0.03, 0.0])
+    _CUP_ROT_BOUNDS_ENHANCED = np.pi
+    _TABLE_Z_BOUNDS = 0.1
+    _TABLE_YAW_BOUNDS = np.pi
 
     _TOLERANCE = np.deg2rad(5)
 
     def _initialize_env(self):
         super()._initialize_env()
         self.cup = Mug(self._mojo)
+        # Cache base pose so resets are deterministic when perturb is disabled.
+        self._cabinet_base_pos = self.cabinet.body.get_position().copy()
+        self._cabinet_base_quat = self.cabinet.body.get_quaternion().copy()
+        self._counter_base_pos = self.cabinet.counter.get_position().copy()
+        self._cup_z_from_counter = self._CUP_POS[2] - self._counter_base_pos[2]
 
     def _success(self) -> bool:
         up = np.array([0, 0, 1])
@@ -56,16 +87,52 @@ class FlipCup(_ManipulationEnv):
         return True
 
     def _on_reset(self):
+        perturb_enabled = _bigym_perturb_enabled()
+        table_yaw_offset = 0.0
+        # Keep original reset distribution when perturb is disabled.
+        if not perturb_enabled:
+            self.cabinet.body.set_position(self._cabinet_base_pos, True)
+            self.cabinet.body.set_quaternion(self._cabinet_base_quat, True)
+            cup_pos_center = self._CUP_POS
+            cup_pos_extents = self._CUP_POS_EXTENTS
+            cup_pos_bounds = self._CUP_POS_BOUNDS
+            cup_rot_bounds = self._CUP_ROT_BOUNDS
+        else:
+            # Domain randomization: jitter cabinet/table pose and expand cup spawn jitter.
+            table_z_offset = np.random.uniform(-self._TABLE_Z_BOUNDS, self._TABLE_Z_BOUNDS)
+            table_yaw_offset = np.random.uniform(
+                -self._TABLE_YAW_BOUNDS, self._TABLE_YAW_BOUNDS
+            )
+            cabinet_pos = self._cabinet_base_pos.copy()
+            cabinet_pos[2] += table_z_offset
+            cabinet_quat = Quaternion(axis=[0, 0, 1], angle=table_yaw_offset) * Quaternion(
+                self._cabinet_base_quat
+            )
+            self.cabinet.body.set_position(cabinet_pos, True)
+            self.cabinet.body.set_quaternion(cabinet_quat.elements, True)
+
+            counter_pos = _rotate_point_xy(
+                self._counter_base_pos, self._cabinet_base_pos, table_yaw_offset
+            )
+            counter_pos[2] += table_z_offset
+            cup_pos_center = counter_pos.copy()
+            cup_pos_center[2] += self._cup_z_from_counter
+            cup_pos_extents = self._CUP_POS_EXTENTS_ENHANCED
+            cup_pos_bounds = self._CUP_POS_BOUNDS_ENHANCED
+            cup_rot_bounds = self._CUP_ROT_BOUNDS_ENHANCED
+
         spawn_point = get_random_points_on_plane(
             1,
-            self._CUP_POS,
-            self._CUP_POS_EXTENTS,
+            cup_pos_center,
+            cup_pos_extents,
             self._CUP_STEP,
-            self._CUP_POS_BOUNDS,
+            cup_pos_bounds,
         )[0]
+        if perturb_enabled:
+            spawn_point = _rotate_point_xy(spawn_point, cup_pos_center, table_yaw_offset)
         self.cup.body.set_position(spawn_point, True)
         quat = Quaternion(axis=[1, 0, 0], angle=self._CUP_ROT_X)
-        angle = np.random.uniform(-self._CUP_ROT_BOUNDS, self._CUP_ROT_BOUNDS)
+        angle = np.random.uniform(-cup_rot_bounds, cup_rot_bounds)
         quat *= Quaternion(axis=[0, 0, 1], angle=self._CUP_ROT_Z + angle)
         self.cup.body.set_quaternion(quat.elements, True)
 
