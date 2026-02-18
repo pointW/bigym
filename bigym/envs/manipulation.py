@@ -71,6 +71,16 @@ class FlipCup(_ManipulationEnv):
         self._cabinet_base_pos = self.cabinet.body.get_position().copy()
         self._cabinet_base_quat = self.cabinet.body.get_quaternion().copy()
         self._counter_base_pos = self.cabinet.counter.get_position().copy()
+        base_rot = Quaternion(self._cabinet_base_quat).rotation_matrix
+        # Counter pose expressed in cabinet-local frame at reset.
+        self._counter_local_pos = base_rot.T @ (self._counter_base_pos - self._cabinet_base_pos)
+        # Use the point right below counter center (z=0 in cabinet-local frame)
+        # as a practical "cabinet lower center" pivot during perturbation yaw.
+        self._cabinet_pivot_local = self._counter_local_pos.copy()
+        self._cabinet_pivot_local[2] = 0.0
+        self._cabinet_pivot_world_base = (
+            self._cabinet_base_pos + base_rot @ self._cabinet_pivot_local
+        )
         self._cup_z_from_counter = self._CUP_POS[2] - self._counter_base_pos[2]
 
     def _success(self) -> bool:
@@ -103,18 +113,19 @@ class FlipCup(_ManipulationEnv):
             table_yaw_offset = np.random.uniform(
                 -self._TABLE_YAW_BOUNDS, self._TABLE_YAW_BOUNDS
             )
-            cabinet_pos = self._cabinet_base_pos.copy()
-            cabinet_pos[2] += table_z_offset
             cabinet_quat = Quaternion(axis=[0, 0, 1], angle=table_yaw_offset) * Quaternion(
                 self._cabinet_base_quat
             )
+            rot = cabinet_quat.rotation_matrix
+            # Keep yaw pivot around cabinet lower center (computed above),
+            # and apply z offset only after pivot alignment.
+            pivot_world = self._cabinet_pivot_world_base.copy()
+            pivot_world[2] += table_z_offset
+            cabinet_pos = pivot_world - rot @ self._cabinet_pivot_local
             self.cabinet.body.set_position(cabinet_pos, True)
             self.cabinet.body.set_quaternion(cabinet_quat.elements, True)
 
-            counter_pos = _rotate_point_xy(
-                self._counter_base_pos, self._cabinet_base_pos, table_yaw_offset
-            )
-            counter_pos[2] += table_z_offset
+            counter_pos = cabinet_pos + rot @ self._counter_local_pos
             cup_pos_center = counter_pos.copy()
             cup_pos_center[2] += self._cup_z_from_counter
             cup_pos_extents = self._CUP_POS_EXTENTS_ENHANCED
