@@ -22,6 +22,7 @@ from bigym.bigym_renderer import BiGymRenderer
 from bigym.utils.callables_cache import CallablesCache
 from bigym.utils.env_health import EnvHealth
 from bigym.utils.observation_config import ObservationConfig
+from bigym.utils.pointcloud_generator import PointCloudGenerator
 
 CONTROL_FREQUENCY_MAX = 500
 CONTROL_FREQUENCY_MIN = 20
@@ -126,6 +127,8 @@ class BiGymEnv(gym.Env):
 
         # Mapping original camera names to full identifiers
         self._cameras_map = self._initialize_cameras()
+        self._pointcloud_generator: Optional[PointCloudGenerator] = None
+        self._initialize_pointcloud_generator()
 
         self.mujoco_renderer: Optional[BiGymRenderer] = None
         self.obs_renderers: Optional[dict[tuple[int, int], mujoco.Renderer]] = {}
@@ -248,6 +251,16 @@ class BiGymEnv(gym.Env):
         self.mujoco_renderer = None
         self.obs_renderers.clear()
 
+    def _initialize_pointcloud_generator(self):
+        """Initialize pointcloud generator if any camera requires pcd."""
+        if any(cam.pcd for cam in self._observation_config.cameras):
+            self._pointcloud_generator = PointCloudGenerator(
+                model=self._mojo.physics.model._model,
+                cameras_map=self._cameras_map,
+            )
+        else:
+            self._pointcloud_generator = None
+
     def _initialize_env(self):
         """Can be overwritten to add task specific items to scene."""
         pass
@@ -354,6 +367,13 @@ class BiGymEnv(gym.Env):
                         low=0,
                         high=1,
                         shape=camera.resolution,
+                        dtype=np.float32,
+                    )
+                if camera.pcd:
+                    obs_dict[f"pcd_{camera.name}"] = spaces.Box(
+                        low=-np.inf,
+                        high=np.inf,
+                        shape=(camera.pcd_points, 6),
                         dtype=np.float32,
                     )
         if self._observation_config.privileged_information:
@@ -520,13 +540,33 @@ class BiGymEnv(gym.Env):
             obs_renderer.update_scene(
                 self._mojo.data, self._cameras_map[camera_config.name][0]
             )
-            if camera_config.rgb:
+            rgb = None
+            if bool(camera_config.rgb or camera_config.pcd):
                 rgb = obs_renderer.render()
-                obs[f"rgb_{camera_config.name}"] = np.moveaxis(rgb, -1, 0)
-            if camera_config.depth:
+            depth = None
+            if bool(camera_config.depth or camera_config.pcd):
                 obs_renderer.enable_depth_rendering()
-                obs[f"depth_{camera_config.name}"] = obs_renderer.render()
+                depth = obs_renderer.render()
                 obs_renderer.disable_depth_rendering()
+
+            if camera_config.rgb:
+                obs[f"rgb_{camera_config.name}"] = np.moveaxis(rgb, -1, 0)
+
+            if camera_config.depth:
+                obs[f"depth_{camera_config.name}"] = depth
+
+            if camera_config.pcd:
+                pcd = self._pointcloud_generator.generate(
+                    depth=depth,
+                    rgb=rgb,
+                    camera_name=camera_config.name,
+                    data=self._mojo.physics.data._data,
+                    n_points=camera_config.pcd_points,
+                    min_dist=camera_config.pcd_min_dist,
+                    max_dist=camera_config.pcd_max_dist,
+                )
+                obs[f"pcd_{camera_config.name}"] = pcd
+
         return obs
 
     def _get_task_privileged_obs(self) -> dict[str, Any]:
@@ -564,6 +604,9 @@ class BiGymEnv(gym.Env):
         """
         self._env_health.reset()
         self._update_seed(override_seed=seed)
+        if self._pointcloud_generator is not None:
+            assert self._current_seed is not None
+            self._pointcloud_generator.set_seed(int(self._current_seed))
         self._mojo.physics.reset()
         self._action = np.zeros_like(self._action)
         self._robot.reset(self.RESET_ROBOT_POS, self.RESET_ROBOT_QUAT)

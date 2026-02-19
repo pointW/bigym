@@ -9,7 +9,6 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
-import mujoco
 import imageio.v2 as imageio
 from pathlib import Path
 from typing import List, Type, Optional, Dict, Any, Tuple
@@ -34,138 +33,6 @@ from demonstrations.demo import Demo, DemoStep
 from bigym.robots.configs.h1 import H1
 from bigym.robots.configs.rby1 import RBY1
 from bigym.action_modes import PelvisDof
-
-
-PCD_KEY_MAP = {
-    "head": "pcd_head",
-    "left_wrist": "pcd_left_wrist",
-    "right_wrist": "pcd_right_wrist",
-}
-
-
-def _get_camera_fovy_deg(model, cam_id: int) -> float:
-    fovy = float(model.cam_fovy[cam_id])
-    if fovy <= 0:
-        fovy = float(model.vis.global_.fovy)
-    return fovy
-
-
-def _resolve_camera_id(model, env, camera_name: str) -> int:
-    """
-    Resolve camera id robustly across namespaced / non-namespaced model names.
-    """
-    cam_map = getattr(env, "_cameras_map", {}) or {}
-
-    for key in (camera_name, f"rby1/{camera_name}", f"h1/{camera_name}"):
-        entry = cam_map.get(key)
-        if entry is not None:
-            try:
-                cam_id = int(entry[0])
-            except Exception:
-                cam_id = -1
-            if cam_id >= 0:
-                return cam_id
-
-    for key in (camera_name, f"rby1/{camera_name}", f"h1/{camera_name}"):
-        try:
-            cam_id = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, key))
-        except Exception:
-            cam_id = -1
-        if cam_id >= 0:
-            return cam_id
-
-    # Final fallback: find camera whose name suffix matches camera_name.
-    for cam_id in range(model.ncam):
-        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_CAMERA, cam_id)
-        if name == camera_name or (name and name.endswith(f"/{camera_name}")):
-            return int(cam_id)
-
-    return -1
-
-
-def _camera_intrinsics_from_fovy(
-    fovy_deg: float, width: int, height: int
-) -> Tuple[float, float, float, float]:
-    fovy_rad = np.deg2rad(fovy_deg)
-    fy = 0.5 * float(height) / np.tan(fovy_rad / 2.0)
-    fovx = 2.0 * np.arctan(np.tan(fovy_rad / 2.0) * (float(width) / float(height)))
-    fx = 0.5 * float(width) / np.tan(fovx / 2.0)
-    cx = (float(width) - 1.0) * 0.5
-    cy = (float(height) - 1.0) * 0.5
-    return fx, fy, cx, cy
-
-
-def _depth_rgb_to_world_pcd(
-    depth: np.ndarray,
-    rgb: np.ndarray,
-    cam_xpos: np.ndarray,
-    cam_xmat: np.ndarray,
-    fovy_deg: float,
-    n_points: int,
-    rng: np.random.Generator,
-    min_dist: Optional[float] = None,
-    max_dist: Optional[float] = None,
-) -> np.ndarray:
-    if depth is None or rgb is None:
-        return np.zeros((n_points, 6), dtype=np.float32)
-
-    depth = np.asarray(depth)
-    if depth.ndim != 2:
-        raise ValueError(f"Expected depth image (H,W), got {depth.shape}")
-
-    if rgb.ndim == 3 and rgb.shape[0] in (1, 3):
-        rgb_img = np.moveaxis(rgb, 0, -1)
-    else:
-        rgb_img = rgb
-
-    height, width = depth.shape
-    fx, fy, cx, cy = _camera_intrinsics_from_fovy(fovy_deg, width, height)
-
-    xs, ys = np.meshgrid(np.arange(width), np.arange(height))
-    mask = np.isfinite(depth) & (depth > 0)
-    if not np.any(mask):
-        return np.zeros((n_points, 6), dtype=np.float32)
-
-    z = depth[mask].astype(np.float32)
-    x = (xs[mask].astype(np.float32) - cx) * z / fx
-    y = (ys[mask].astype(np.float32) - cy) * z / fy
-    pts_cam = np.stack([x, y, z], axis=1)
-    # MuJoCo camera frame correction (flip Y and Z)
-    pts_cam[:, 1] *= -1.0
-    pts_cam[:, 2] *= -1.0
-
-    if min_dist is not None or max_dist is not None:
-        dist = np.linalg.norm(pts_cam, axis=1)
-        keep = np.ones(dist.shape[0], dtype=bool)
-        if min_dist is not None:
-            keep &= dist >= float(min_dist)
-        if max_dist is not None:
-            keep &= dist <= float(max_dist)
-        if not np.any(keep):
-            return np.zeros((n_points, 6), dtype=np.float32)
-        pts_cam = pts_cam[keep]
-        mask_idx = np.flatnonzero(mask)[keep]
-    else:
-        mask_idx = np.flatnonzero(mask)
-
-    R = cam_xmat.reshape(3, 3)
-    pts_world = pts_cam @ R.T + cam_xpos.reshape(1, 3)
-
-    colors = rgb_img.reshape(-1, rgb_img.shape[-1])[mask_idx].astype(np.float32)
-    if colors.size == 0:
-        colors = np.zeros((pts_world.shape[0], 3), dtype=np.float32)
-    if colors.max() > 1.0:
-        colors = colors / 255.0
-    if colors.shape[1] != 3:
-        colors = colors[:, :3]
-
-    total = pts_world.shape[0]
-    replace = total < n_points
-    idx = rng.choice(total, size=n_points, replace=replace)
-    pts_world = pts_world[idx]
-    colors = colors[idx]
-
-    return np.concatenate([pts_world, colors], axis=1).astype(np.float32)
 
 
 def detect_floating_dofs_from_demos(env_name: str) -> List[PelvisDof]:
@@ -526,9 +393,8 @@ def convert_h1_demo_to_rby1_cartesian(
     enable_perturb: bool = False,
     with_pointcloud: bool = True,
     pcd_points: int = 1024,
-    pcd_keep_depth: bool = True,
     pcd_min_dist: Optional[float] = None,
-    pcd_max_dist: Optional[float] = None,
+    pcd_max_dist: Optional[float] = 3.0,
     warmup_steps: int = 55,
 ) -> Tuple[Demo, bool]:
     """Convert a single H1 joint demo to RBY1 Cartesian demo.
@@ -548,7 +414,6 @@ def convert_h1_demo_to_rby1_cartesian(
             (default disabled)
         with_pointcloud: If True, generate point clouds from depth + rgb
         pcd_points: Number of points to sample per camera
-        pcd_keep_depth: Keep depth images in observations
         pcd_min_dist: Minimum camera distance (meters) to keep points
         pcd_max_dist: Maximum camera distance (meters) to keep points
         warmup_steps: Number of stabilization steps after RBY1 reset.
@@ -567,6 +432,10 @@ def convert_h1_demo_to_rby1_cartesian(
         for cam in camera_configs:
             cam.rgb = True
             cam.depth = True
+            cam.pcd = True
+            cam.pcd_points = int(pcd_points)
+            cam.pcd_min_dist = pcd_min_dist
+            cam.pcd_max_dist = pcd_max_dist
     
     # Detect the correct floating DOFs for this environment
     floating_dofs = detect_floating_dofs_from_demos(env_name)
@@ -690,24 +559,6 @@ def convert_h1_demo_to_rby1_cartesian(
         else:
             os.environ["BIGYM_DISABLE_PERTURB"] = prev_bigym_disable_perturb
 
-    pcd_rng: Optional[np.random.Generator] = None
-    pcd_cam_params: Dict[str, Tuple[int, float]] = {}
-    if with_pointcloud:
-        pcd_rng = np.random.default_rng(int(original_demo.seed))
-        model = rby1_env._mojo.physics.model._model
-        for cam in camera_configs:
-            cam_id = _resolve_camera_id(model=model, env=rby1_env, camera_name=cam.name)
-            if cam_id < 0:
-                model_cam_names = [
-                    mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_CAMERA, i)
-                    for i in range(model.ncam)
-                ]
-                raise ValueError(
-                    f"Failed to resolve camera '{cam.name}' for pointcloud generation. "
-                    f"Available model cameras: {model_cam_names}"
-                )
-            pcd_cam_params[cam.name] = (cam_id, _get_camera_fovy_deg(model, cam_id))
-
     warmup_steps = int(max(0, warmup_steps))
     if warmup_steps > 0:
         hold_action = _build_rby1_hold_action_from_obs(rby1_obs)
@@ -741,48 +592,6 @@ def convert_h1_demo_to_rby1_cartesian(
         )
         obs, reward, terminated, truncated, info = rby1_env.step(clipped_action)
         rby1_obs = obs
-        if with_pointcloud and pcd_rng is not None:
-            data = rby1_env._mojo.physics.data._data
-            for cam in camera_configs:
-                if not cam.depth:
-                    continue
-                depth_key = f"depth_{cam.name}"
-                rgb_key = f"rgb_{cam.name}"
-                depth = obs.get(depth_key)
-                rgb = obs.get(rgb_key)
-                if depth is None or rgb is None:
-                    raise KeyError(
-                        f"Missing '{depth_key}' or '{rgb_key}' in observation keys {list(obs.keys())}. "
-                        f"Camera namespace/config mismatch for '{cam.name}'."
-                    )
-                cam_id, fovy = pcd_cam_params.get(cam.name, (-1, 0.0))
-                if cam_id < 0:
-                    raise ValueError(
-                        f"Unresolved camera id for '{cam.name}'. "
-                        "Pointcloud camera namespace mapping is inconsistent."
-                    )
-                cam_xpos = np.array(data.cam_xpos[cam_id])
-                cam_xmat = np.array(data.cam_xmat[cam_id])
-                pcd = _depth_rgb_to_world_pcd(
-                    depth=depth,
-                    rgb=rgb,
-                    cam_xpos=cam_xpos,
-                    cam_xmat=cam_xmat,
-                    fovy_deg=fovy,
-                    n_points=pcd_points,
-                    rng=pcd_rng,
-                    min_dist=pcd_min_dist,
-                    max_dist=pcd_max_dist,
-                )
-                pcd_key = PCD_KEY_MAP.get(cam.name)
-                if pcd_key is None:
-                    continue
-                obs[pcd_key] = pcd
-                if not pcd_keep_depth:
-                    obs.pop(depth_key, None)
-        elif with_pointcloud and not pcd_keep_depth:
-            for cam in camera_configs:
-                obs.pop(f"depth_{cam.name}", None)
         info = info or {}
         last_info = info
         timesteps.append(
@@ -821,7 +630,6 @@ def _convert_demo_worker(
         bool,
         bool,
         int,
-        bool,
         Optional[float],
         Optional[float],
         int,
@@ -842,7 +650,6 @@ def _convert_demo_worker(
         enable_perturb,
         with_pointcloud,
         pcd_points,
-        pcd_keep_depth,
         pcd_min_dist,
         pcd_max_dist,
         warmup_steps,
@@ -863,7 +670,6 @@ def _convert_demo_worker(
             enable_perturb=enable_perturb,
             with_pointcloud=with_pointcloud,
             pcd_points=pcd_points,
-            pcd_keep_depth=pcd_keep_depth,
             pcd_min_dist=pcd_min_dist,
             pcd_max_dist=pcd_max_dist,
             warmup_steps=warmup_steps,
@@ -893,9 +699,8 @@ def convert_h1_demos_batch(
     enable_perturb: bool = False,
     with_pointcloud: bool = True,
     pcd_points: int = 1024,
-    pcd_keep_depth: bool = True,
     pcd_min_dist: Optional[float] = None,
-    pcd_max_dist: Optional[float] = None,
+    pcd_max_dist: Optional[float] = 3.0,
     warmup_steps: int = 55,
 ) -> List[Demo]:
     """Convert a batch of H1 demonstrations to RBY1 Cartesian format.
@@ -920,7 +725,6 @@ def convert_h1_demos_batch(
             (default disabled)
         with_pointcloud: If True, generate point clouds from depth + rgb
         pcd_points: Number of points to sample per camera
-        pcd_keep_depth: Keep depth images in observations
         pcd_min_dist: Minimum camera distance (meters) to keep points
         pcd_max_dist: Maximum camera distance (meters) to keep points
         warmup_steps: Number of stabilization steps after RBY1 reset.
@@ -943,6 +747,10 @@ def convert_h1_demos_batch(
         for cam in camera_configs:
             cam.rgb = True
             cam.depth = True
+            cam.pcd = True
+            cam.pcd_points = int(pcd_points)
+            cam.pcd_min_dist = pcd_min_dist
+            cam.pcd_max_dist = pcd_max_dist
     
     # Auto-generate output directory name if not provided
     if output_dir is None:
@@ -1021,7 +829,6 @@ def convert_h1_demos_batch(
                     enable_perturb,
                     with_pointcloud,
                     pcd_points,
-                    pcd_keep_depth,
                     pcd_min_dist,
                     pcd_max_dist,
                     warmup_steps,
@@ -1078,7 +885,6 @@ def convert_h1_demos_batch(
                 enable_perturb,
                 with_pointcloud,
                 pcd_points,
-                pcd_keep_depth,
                 pcd_min_dist,
                 pcd_max_dist,
                 warmup_steps,
@@ -1098,7 +904,6 @@ def convert_h1_demos_batch(
                     enable_perturb=enable_perturb,
                     with_pointcloud=with_pointcloud,
                     pcd_points=pcd_points,
-                    pcd_keep_depth=pcd_keep_depth,
                     pcd_min_dist=pcd_min_dist,
                     pcd_max_dist=pcd_max_dist,
                     warmup_steps=warmup_steps,
@@ -1110,6 +915,7 @@ def convert_h1_demos_batch(
     success_idx = 0
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True)
+
     for i, result in enumerate(results):
         success, rby1_demo, error = result or (False, None, "No result returned.")
         print(f"\nConverting demo {i+1}/{total_variants} to RBY1 Cartesian...")
@@ -1253,13 +1059,8 @@ def main():
     parser.add_argument(
         "--pcd-max-dist",
         type=float,
-        default=None,
+        default=3.0,
         help="Maximum camera distance (meters) to keep points"
-    )
-    parser.add_argument(
-        "--pcd-drop-depth",
-        action="store_true",
-        help="Drop depth images from observations after point cloud generation"
     )
     parser.add_argument(
         "--warmup-steps",
@@ -1290,7 +1091,6 @@ def main():
         enable_perturb=args.enable_perturb,
         with_pointcloud=not args.no_pointcloud,
         pcd_points=args.pcd_points,
-        pcd_keep_depth=not args.pcd_drop_depth,
         pcd_min_dist=args.pcd_min_dist,
         pcd_max_dist=args.pcd_max_dist,
         warmup_steps=args.warmup_steps,

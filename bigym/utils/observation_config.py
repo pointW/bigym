@@ -6,10 +6,13 @@ from typing import Optional
 @dataclass
 class CameraConfig:
     """Configuration for camera observations."""
-
     name: str
     rgb: bool = True
     depth: bool = False
+    pcd: bool = False
+    pcd_points: int = 1024
+    pcd_min_dist: Optional[float] = None
+    pcd_max_dist: Optional[float] = 3.0
     resolution: tuple[int, int] = (128, 128)
     pos: Optional[tuple[float, float, float]] = None
     quat: Optional[tuple[float, float, float, float]] = None
@@ -27,10 +30,15 @@ class CameraConfig:
             assert len(self.quat) == 4
             if not isinstance(self.quat, tuple):
                 self.quat = tuple(self.quat)
+        self.pcd_points = int(self.pcd_points)
+        if self.pcd_points <= 0:
+            raise ValueError("pcd_points must be a positive integer")
 
     @classmethod
     def from_safetensors_metadata(cls, metadata: dict):
         """Get metadata from a safetensor metadata dict."""
+        metadata = dict(metadata)
+        metadata.pop("pcd_keep_depth", None)  # backward compatibility
         camera_config = cls(**metadata)
         camera_config.resolution = tuple(camera_config.resolution)
         return camera_config
@@ -42,6 +50,8 @@ class CameraConfig:
             s += "-rgb"
         if self.depth:
             s += "-depth"
+        if self.pcd:
+            s += "-pcd"
         s += "-" + "x".join(map(str, self.resolution))
         return s
 
