@@ -52,7 +52,7 @@ class FlipCup(_ManipulationEnv):
     _CUP_STEP = 0.1
     _CUP_POS_EXTENTS = np.array([0.1, 0.25])
     _CUP_POS_BOUNDS = np.array([0.03, 0.03, 0])
-    _CUP_ROT_BOUNDS = np.pi
+    _CUP_ROT_BOUNDS = np.deg2rad(30)
     # Enhanced reset distribution for perturb mode:
     # shift center toward the counter center and cover most of the tabletop
     # while keeping margin from edges to avoid frequent falls.
