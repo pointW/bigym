@@ -184,10 +184,26 @@ RBY1_FINE_MANIPULATION_CONFIG = RobotConfig(
 
 
 # Small perturbations applied after reset (meters / radians)
-_BASE_PERTURB_POS_RANGE = 0.1  # base XY jitter
-_BASE_PERTURB_YAW_RANGE = np.deg2rad(20.0)  # base yaw jitter
-_EE_PERTURB_POS_RANGE = 0.1  # end-effector translational jitter
-_EE_PERTURB_ROT_RANGE = np.deg2rad(20.0)  # end-effector rotational jitter
+# Ranges are specified as (min, max).
+_BASE_PERTURB_X_RANGE = (-0.1, 0.1)  # base X jitter
+_BASE_PERTURB_Y_RANGE = (-0.1, 0.1)  # base Y jitter
+_BASE_PERTURB_YAW_RANGE = (-np.deg2rad(20.0), np.deg2rad(20.0))  # base yaw jitter
+_EE_PERTURB_POS_RANGE = (-0.1, 0.1)  # end-effector translational jitter
+_EE_PERTURB_ROT_RANGE = (-np.deg2rad(20.0), np.deg2rad(20.0))  # end-effector rotational jitter
+
+
+def _parse_range(value, name: str) -> tuple[float, float]:
+    if isinstance(value, (list, tuple, np.ndarray)):
+        if len(value) != 2:
+            raise ValueError(f"{name} must be a (min, max) tuple, got {value}.")
+        low, high = float(value[0]), float(value[1])
+    else:
+        # Fallback for legacy scalar values: treat as symmetric range.
+        bound = float(value)
+        low, high = -abs(bound), abs(bound)
+    if low > high:
+        raise ValueError(f"{name} must satisfy min <= max (got {value}).")
+    return low, high
 
 
 def _rand_unit_vec(rng: np.random.RandomState):
@@ -198,10 +214,13 @@ def _rand_unit_vec(rng: np.random.RandomState):
     return vec / norm
 
 
-def _small_random_quat(max_angle_rad: float, rng: np.random.RandomState) -> np.ndarray:
-    """Sample a small random quaternion with angle bounded by max_angle_rad."""
+def _small_random_quat(
+    angle_range: tuple[float, float] | float, rng: np.random.RandomState
+) -> np.ndarray:
+    """Sample a small random quaternion with angle bounded by angle_range."""
     axis = _rand_unit_vec(rng)
-    angle = rng.uniform(-max_angle_rad, max_angle_rad)
+    min_angle, max_angle = _parse_range(angle_range, "rot_range")
+    angle = rng.uniform(min_angle, max_angle)
     half = angle / 2.0
     sin_half = np.sin(half)
     return np.array([np.cos(half), *(axis * sin_half)], dtype=np.float64)
@@ -235,8 +254,9 @@ def _restore_rby1_rng_state(rng_state):
 
 def _perturb_rby1_base(
     mojo,
-    pos_range: float,
-    yaw_range: float,
+    x_range: tuple[float, float] | float,
+    y_range: tuple[float, float] | float,
+    yaw_range: tuple[float, float] | float,
     rng: np.random.RandomState,
 ):
     """Apply a small XY/yaw perturbation to the mobile base."""
@@ -279,8 +299,14 @@ def _perturb_rby1_base(
         base_quat = np.zeros(4, dtype=np.float64)
         mujoco.mju_mat2Quat(base_quat, data.xmat[base_body_id])
 
-    delta_xy = rng.uniform(-pos_range, pos_range, size=2)
-    delta_yaw = rng.uniform(-yaw_range, yaw_range)
+    x_min, x_max = _parse_range(x_range, "base_perturb_x_range")
+    y_min, y_max = _parse_range(y_range, "base_perturb_y_range")
+    yaw_min, yaw_max = _parse_range(yaw_range, "base_perturb_yaw_range")
+
+    delta_xy = np.array(
+        [rng.uniform(x_min, x_max), rng.uniform(y_min, y_max)], dtype=np.float64
+    )
+    delta_yaw = rng.uniform(yaw_min, yaw_max)
 
     new_pos = base_pos.copy()
     new_pos[0] += delta_xy[0]
@@ -313,8 +339,8 @@ def _perturb_rby1_base(
 
 def _perturb_rby1_end_effectors(
     mojo,
-    pos_range: float,
-    rot_range: float,
+    pos_range: tuple[float, float] | float,
+    rot_range: tuple[float, float] | float,
     rng: np.random.RandomState | None = None,
     restore_state: bool = True,
 ):
@@ -359,7 +385,8 @@ def _perturb_rby1_end_effectors(
 
     try:
         def _perturb_pose(pos: np.ndarray, quat: np.ndarray):
-            delta_pos = rng.uniform(-pos_range, pos_range, size=3)
+            pos_min, pos_max = _parse_range(pos_range, "ee_perturb_pos_range")
+            delta_pos = rng.uniform(pos_min, pos_max, size=3)
             delta_quat = _small_random_quat(rot_range, rng)
             new_pos = pos + delta_pos
             new_quat = np.zeros(4, dtype=np.float64)
@@ -451,8 +478,38 @@ def _apply_head_default_posture(mojo):
 class RBY1(Robot):
     """RBY1 Robot with Robotiq grippers."""
 
-    def __init__(self, action_mode, mojo=None):
+    def __init__(
+        self,
+        action_mode,
+        mojo=None,
+        base_perturb_x_range: tuple[float, float] | float | None = None,
+        base_perturb_y_range: tuple[float, float] | float | None = None,
+        base_perturb_yaw_range: tuple[float, float] | float | None = None,
+        ee_perturb_pos_range: tuple[float, float] | float | None = None,
+        ee_perturb_rot_range: tuple[float, float] | float | None = None,
+    ):
         """Initialize RBY1 robot with mocap base control."""
+        self._base_perturb_x_range = _parse_range(
+            _BASE_PERTURB_X_RANGE if base_perturb_x_range is None else base_perturb_x_range,
+            "base_perturb_x_range",
+        )
+        self._base_perturb_y_range = _parse_range(
+            _BASE_PERTURB_Y_RANGE if base_perturb_y_range is None else base_perturb_y_range,
+            "base_perturb_y_range",
+        )
+        self._base_perturb_yaw_range = _parse_range(
+            _BASE_PERTURB_YAW_RANGE if base_perturb_yaw_range is None else base_perturb_yaw_range,
+            "base_perturb_yaw_range",
+        )
+        self._ee_perturb_pos_range = _parse_range(
+            _EE_PERTURB_POS_RANGE if ee_perturb_pos_range is None else ee_perturb_pos_range,
+            "ee_perturb_pos_range",
+        )
+        self._ee_perturb_rot_range = _parse_range(
+            _EE_PERTURB_ROT_RANGE if ee_perturb_rot_range is None else ee_perturb_rot_range,
+            "ee_perturb_rot_range",
+        )
+
         super().__init__(action_mode, mojo)
         
         # Fix limb_actuators for RBY1 with namespace
@@ -558,14 +615,15 @@ class RBY1(Robot):
             try:
                 _perturb_rby1_base(
                     self._mojo,
-                    pos_range=_BASE_PERTURB_POS_RANGE,
-                    yaw_range=_BASE_PERTURB_YAW_RANGE,
+                    x_range=self._base_perturb_x_range,
+                    y_range=self._base_perturb_y_range,
+                    yaw_range=self._base_perturb_yaw_range,
                     rng=rng,
                 )
                 _perturb_rby1_end_effectors(
                     self._mojo,
-                    pos_range=_EE_PERTURB_POS_RANGE,
-                    rot_range=_EE_PERTURB_ROT_RANGE,
+                    pos_range=self._ee_perturb_pos_range,
+                    rot_range=self._ee_perturb_rot_range,
                     rng=rng,
                     restore_state=False,
                 )
@@ -581,10 +639,40 @@ class RBY1(Robot):
 class RBY1FineManipulation(Robot):
     """RBY1 Robot with Robotiq gripper for fine manipulations."""
 
-    def __init__(self, action_mode, mojo=None):
+    def __init__(
+        self,
+        action_mode,
+        mojo=None,
+        base_perturb_x_range: tuple[float, float] | float | None = None,
+        base_perturb_y_range: tuple[float, float] | float | None = None,
+        base_perturb_yaw_range: tuple[float, float] | float | None = None,
+        ee_perturb_pos_range: tuple[float, float] | float | None = None,
+        ee_perturb_rot_range: tuple[float, float] | float | None = None,
+    ):
         """Initialize RBY1 robot with mocap base control."""
+        self._base_perturb_x_range = _parse_range(
+            _BASE_PERTURB_X_RANGE if base_perturb_x_range is None else base_perturb_x_range,
+            "base_perturb_x_range",
+        )
+        self._base_perturb_y_range = _parse_range(
+            _BASE_PERTURB_Y_RANGE if base_perturb_y_range is None else base_perturb_y_range,
+            "base_perturb_y_range",
+        )
+        self._base_perturb_yaw_range = _parse_range(
+            _BASE_PERTURB_YAW_RANGE if base_perturb_yaw_range is None else base_perturb_yaw_range,
+            "base_perturb_yaw_range",
+        )
+        self._ee_perturb_pos_range = _parse_range(
+            _EE_PERTURB_POS_RANGE if ee_perturb_pos_range is None else ee_perturb_pos_range,
+            "ee_perturb_pos_range",
+        )
+        self._ee_perturb_rot_range = _parse_range(
+            _EE_PERTURB_ROT_RANGE if ee_perturb_rot_range is None else ee_perturb_rot_range,
+            "ee_perturb_rot_range",
+        )
+
         # Set desired scale before loading
-        self._model_scale = 1.3 
+        self._model_scale = 1.3
         super().__init__(action_mode, mojo)
         
         # Fix limb_actuators for RBY1 with namespace
@@ -734,14 +822,15 @@ class RBY1FineManipulation(Robot):
             try:
                 _perturb_rby1_base(
                     self._mojo,
-                    pos_range=_BASE_PERTURB_POS_RANGE,
-                    yaw_range=_BASE_PERTURB_YAW_RANGE,
+                    x_range=self._base_perturb_x_range,
+                    y_range=self._base_perturb_y_range,
+                    yaw_range=self._base_perturb_yaw_range,
                     rng=rng,
                 )
                 _perturb_rby1_end_effectors(
                     self._mojo,
-                    pos_range=_EE_PERTURB_POS_RANGE,
-                    rot_range=_EE_PERTURB_ROT_RANGE,
+                    pos_range=self._ee_perturb_pos_range,
+                    rot_range=self._ee_perturb_rot_range,
                     rng=rng,
                     restore_state=False,
                 )

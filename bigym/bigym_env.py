@@ -60,6 +60,7 @@ class BiGymEnv(gym.Env):
         start_seed: Optional[int] = None,
         control_frequency: int = CONTROL_FREQUENCY_MAX,
         robot_cls: Optional[Type[Robot]] = None,
+        robot_kwargs: Optional[dict[str, Any]] = None,
     ):
         """Init.
 
@@ -74,6 +75,7 @@ class BiGymEnv(gym.Env):
             seed will be used.
         :param control_frequency: Control loop frequency, 500 Hz by default.
         :param robot_cls: Environment robot class override.
+        :param robot_kwargs: Optional kwargs forwarded to the robot constructor.
         """
         # Tracks physics simulation stability
         self._env_health = EnvHealth()
@@ -100,7 +102,10 @@ class BiGymEnv(gym.Env):
         )
 
         self._mojo = Mojo(str(self._MODEL_PATH), timestep=PHYSICS_DT)
-        self._robot = (robot_cls or self.DEFAULT_ROBOT)(self.action_mode, self._mojo)
+        robot_kwargs = robot_kwargs or {}
+        self._robot = (robot_cls or self.DEFAULT_ROBOT)(
+            self.action_mode, self._mojo, **robot_kwargs
+        )
         self._preset = Preset(self._mojo, self._PRESET_PATH)
         self._initialize_env()
         self._floor = Geom.get(self._mojo, self._FLOOR)
@@ -154,7 +159,8 @@ class BiGymEnv(gym.Env):
     @property
     def success(self) -> bool:
         """Check if current step is successful."""
-        return bool(self._step_cache.get(self._success))
+        task_success = bool(self._step_cache.get(self._success))
+        return bool(task_success and (not self.truncate) and self.is_healthy)
 
     @property
     def fail(self) -> bool:

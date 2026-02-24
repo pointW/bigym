@@ -6,12 +6,13 @@ import numpy as np
 from gymnasium import spaces
 from pyquaternion import Quaternion
 
-from bigym.bigym_env import BiGymEnv
+from bigym.bigym_env import BiGymEnv, CONTROL_FREQUENCY_MAX
 from bigym.const import PRESETS_PATH
 from bigym.envs.props.holders import DishDrainer
 from bigym.envs.props.kitchenware import Plate
 from bigym.envs.props.tables import Table
 from bigym.utils.physics_utils import distance
+from bigym.utils.observation_config import ObservationConfig
 
 
 # Legacy reset distribution (used before commit e624aa8).
@@ -129,6 +130,46 @@ class _MovePlatesEnv(BiGymEnv, ABC):
 
 class MovePlate(_MovePlatesEnv):
     """Move one plate from one rack to another."""
+
+    def __init__(
+        self,
+        action_mode,
+        observation_config: ObservationConfig = ObservationConfig(),
+        render_mode=None,
+        start_seed=None,
+        control_frequency: int = CONTROL_FREQUENCY_MAX,
+        robot_cls=None,
+        robot_kwargs=None,
+    ):
+        resolved_robot_cls = robot_cls or self.DEFAULT_ROBOT
+        if robot_kwargs is None and getattr(resolved_robot_cls, "__name__", None) in {
+            "RBY1",
+            "RBY1FineManipulation",
+        }:
+            # Freeze MovePlate defaults to current RBY1 init perturb ranges.
+            robot_kwargs = {
+                "base_perturb_x_range": (-0.1, 0.1),
+                "base_perturb_y_range": (-0.1, 0.1),
+                "base_perturb_yaw_range": (
+                    -np.deg2rad(20.0),
+                    np.deg2rad(20.0),
+                ),
+                "ee_perturb_pos_range": (-0.1, 0.1),
+                "ee_perturb_rot_range": (
+                    -np.deg2rad(20.0),
+                    np.deg2rad(20.0),
+                ),
+            }
+
+        super().__init__(
+            action_mode=action_mode,
+            observation_config=observation_config,
+            render_mode=render_mode,
+            start_seed=start_seed,
+            control_frequency=control_frequency,
+            robot_cls=robot_cls,
+            robot_kwargs=robot_kwargs,
+        )
 
     def _get_task_privileged_obs_space(self):
         return {
