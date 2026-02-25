@@ -61,6 +61,7 @@ class BiGymEnv(gym.Env):
         control_frequency: int = CONTROL_FREQUENCY_MAX,
         robot_cls: Optional[Type[Robot]] = None,
         robot_kwargs: Optional[dict[str, Any]] = None,
+        reset_warmup_steps: Optional[int] = None,
     ):
         """Init.
 
@@ -76,6 +77,8 @@ class BiGymEnv(gym.Env):
         :param control_frequency: Control loop frequency, 500 Hz by default.
         :param robot_cls: Environment robot class override.
         :param robot_kwargs: Optional kwargs forwarded to the robot constructor.
+        :param reset_warmup_steps: Number of passive warmup control steps to run
+            after reset and before returning observations. If None, defaults to 55.
         """
         # Tracks physics simulation stability
         self._env_health = EnvHealth()
@@ -99,6 +102,9 @@ class BiGymEnv(gym.Env):
         self._control_frequency = control_frequency
         self._sub_steps_count = int(
             np.round(CONTROL_FREQUENCY_MAX / self._control_frequency)
+        )
+        self._reset_warmup_steps = self._validate_reset_warmup_steps(
+            reset_warmup_steps, default=55
         )
 
         self._mojo = Mojo(str(self._MODEL_PATH), timestep=PHYSICS_DT)
@@ -196,6 +202,11 @@ class BiGymEnv(gym.Env):
     def control_frequency(self):
         """Control frequency of the environment."""
         return self._control_frequency
+
+    @property
+    def reset_warmup_steps(self) -> int:
+        """Number of warmup control steps applied after reset."""
+        return self._reset_warmup_steps
 
     @property
     def robot(self) -> Robot:
@@ -600,13 +611,45 @@ class BiGymEnv(gym.Env):
         self._next_seed = np.random.randint(2**32)
         np.random.seed(self._current_seed)
 
+    @staticmethod
+    def _validate_reset_warmup_steps(
+        warmup_steps: Optional[int], default: int
+    ) -> int:
+        """Validate reset warmup steps configuration."""
+        value = default if warmup_steps is None else warmup_steps
+        try:
+            value = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Expected reset_warmup_steps to be an integer, got {warmup_steps!r}."
+            ) from exc
+        if value < 0:
+            raise ValueError(
+                f"Expected reset_warmup_steps >= 0, got {value}."
+            )
+        return value
+
+    def _run_reset_warmup(self, warmup_steps: int):
+        """Run passive stabilization steps after reset."""
+        for _ in range(warmup_steps):
+            self._step_cache.clean()
+            with self._env_health.track():
+                for _ in range(self._sub_steps_count):
+                    self._mojo.step()
+                    mujoco.mj_rnePostConstraint(self._mojo.model, self._mojo.data)
+            self._on_step()
+            if not self.is_healthy:
+                break
+        self._step_cache.clean()
+
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
         """Reset the environment.
 
         Args:
            seed: If not None, the environment will be reset with this seed.
            options: Additional information to specify how the environment is reset
-            (optional, depending on the specific environment).
+            (optional, depending on the specific environment). You can pass
+            {"reset_warmup_steps": int} to override warmup for this reset call.
         """
         self._env_health.reset()
         self._update_seed(override_seed=seed)
@@ -617,6 +660,14 @@ class BiGymEnv(gym.Env):
         self._action = np.zeros_like(self._action)
         self._robot.reset(self.RESET_ROBOT_POS, self.RESET_ROBOT_QUAT)
         self._on_reset()
+        warmup_steps = self._reset_warmup_steps
+        if options is not None and "reset_warmup_steps" in options:
+            warmup_steps = self._validate_reset_warmup_steps(
+                options["reset_warmup_steps"],
+                default=self._reset_warmup_steps,
+            )
+        if warmup_steps > 0:
+            self._run_reset_warmup(warmup_steps)
         return self.get_observation(), self.get_info()
 
     def _on_reset(self):
