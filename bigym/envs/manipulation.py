@@ -1,6 +1,8 @@
 """Manipulation tasks."""
 from abc import ABC
+from functools import lru_cache
 import os
+from pathlib import Path
 
 import numpy as np
 from mojo.elements import Body, Geom
@@ -8,7 +10,7 @@ from mojo.elements.consts import GeomType
 from pyquaternion import Quaternion
 
 from bigym.bigym_env import BiGymEnv
-from bigym.const import PRESETS_PATH
+from bigym.const import ASSETS_PATH, PRESETS_PATH
 from bigym.envs.props.cabintets import BaseCabinet
 from bigym.envs.props.cutlery import Spoon
 from bigym.envs.props.items import Cube
@@ -34,6 +36,34 @@ def _rotate_point_xy(point: np.ndarray, center: np.ndarray, yaw: float) -> np.nd
     return rotated
 
 
+def _max_obj_axis(obj_path: Path, axis: int) -> float:
+    """Return max vertex coordinate along an OBJ axis."""
+    max_value = -np.inf
+    with obj_path.open("r", encoding="utf-8") as file:
+        for line in file:
+            if not line.startswith("v "):
+                continue
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            value = float(parts[axis + 1])
+            if value > max_value:
+                max_value = value
+    if not np.isfinite(max_value):
+        raise ValueError(f"Could not read vertices from OBJ: {obj_path}")
+    return float(max_value)
+
+
+@lru_cache(maxsize=1)
+def _upside_down_mug_support_depth() -> float:
+    """Return support depth from mug root to contact point when upside down."""
+    mug_assets = ASSETS_PATH / "props/mug/assets"
+    collision_meshes = sorted(mug_assets.glob("mug_collision_*.obj"))
+    if not collision_meshes:
+        collision_meshes = [mug_assets / "mug.obj"]
+    return max(_max_obj_axis(mesh_path, axis=1) for mesh_path in collision_meshes)
+
+
 class _ManipulationEnv(BiGymEnv, ABC):
     """Base manipulation environment."""
 
@@ -56,11 +86,12 @@ class FlipCup(_ManipulationEnv):
     # Enhanced reset distribution for perturb mode:
     # shift center toward the counter center and cover most of the tabletop
     # while keeping margin from edges to avoid frequent falls.
-    _CUP_POS_EXTENTS_ENHANCED = np.array([0.26, 0.26])
+    _CUP_POS_EXTENTS_ENHANCED = np.array([0.12, 0.12])
     _CUP_POS_BOUNDS_ENHANCED = np.array([0.03, 0.03, 0.0])
     _CUP_ROT_BOUNDS_ENHANCED = np.pi
     _TABLE_Z_BOUNDS = 0.1
     _TABLE_YAW_BOUNDS = np.pi
+    _CUP_TABLE_CONTACT_EPS = 1.0e-4
 
     _TOLERANCE = np.deg2rad(5)
 
@@ -81,7 +112,17 @@ class FlipCup(_ManipulationEnv):
         self._cabinet_pivot_world_base = (
             self._cabinet_base_pos + base_rot @ self._cabinet_pivot_local
         )
-        self._cup_z_from_counter = self._CUP_POS[2] - self._counter_base_pos[2]
+        counter_size = np.array(self.cabinet.counter.mjcf.size, dtype=np.float64)
+        if counter_size.size < 3:
+            raise ValueError(
+                "Expected counter geom to have 3D size for z surface offset."
+            )
+        counter_half_height = float(counter_size[2])
+        self._cup_z_from_counter = (
+            counter_half_height
+            + _upside_down_mug_support_depth()
+            - self._CUP_TABLE_CONTACT_EPS
+        )
 
     def _success(self) -> bool:
         up = np.array([0, 0, 1])
