@@ -913,6 +913,7 @@ def convert_h1_demos_batch(
                 results[index] = (False, None, traceback.format_exc())
 
     success_idx = 0
+    failure_idx = 0
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True)
 
@@ -924,16 +925,26 @@ def convert_h1_demos_batch(
             continue
         status_msg = "SUCCESS" if success else "FAILURE"
         print(f"RBY1 rollout result: {status_msg}")
-        if not success or rby1_demo is None:
-            print("Skipping save because the converted demo did not succeed.")
+        if rby1_demo is None:
+            print("Skipping save because the converted demo is missing.")
             continue
-        rby1_cartesian_demos.append(rby1_demo)
-        demo_path = output_path / f"rby1_cartesian_demo_{success_idx:03d}.safetensors"
-        print(f"Saving successful RBY1 demo to {demo_path}...")
-        rby1_demo.save(demo_path)
-        _write_demo_videos(rby1_demo, success_idx)
-        success_idx += 1
-        print("✓ Successfully saved RBY1 Cartesian demo")
+
+        if success:
+            rby1_cartesian_demos.append(rby1_demo)
+            demo_path = output_path / f"rby1_cartesian_demo_{success_idx:03d}.safetensors"
+            print(f"Saving successful RBY1 demo to {demo_path}...")
+            rby1_demo.save(demo_path)
+            _write_demo_videos(rby1_demo, success_idx)
+            success_idx += 1
+            print("✓ Successfully saved RBY1 Cartesian demo")
+        else:
+            failure_path = output_path / "failure"
+            failure_path.mkdir(parents=True, exist_ok=True)
+            demo_path = failure_path / f"failed_rby1_cartesian_demo_{failure_idx:03d}.safetensors"
+            print(f"Saving failed RBY1 demo to {demo_path}...")
+            rby1_demo.save(demo_path)
+            failure_idx += 1
+            print("✓ Saved failed RBY1 Cartesian demo")
     
     print(f"\nSuccessfully converted {len(rby1_cartesian_demos)}/{total_variants} H1 demonstrations to RBY1")
     return rby1_cartesian_demos
