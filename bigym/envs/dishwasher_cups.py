@@ -1,15 +1,23 @@
 """Load/unload cups to/from dishwasher."""
 from abc import ABC
+import os
 
 import numpy as np
 from pyquaternion import Quaternion
 
-from bigym.bigym_env import BiGymEnv
+from bigym.bigym_env import BiGymEnv, CONTROL_FREQUENCY_MAX
 from bigym.const import PRESETS_PATH
 from bigym.envs.props.cabintets import BaseCabinet, WallCabinet
 from bigym.envs.props.dishwasher import Dishwasher
 from bigym.envs.props.kitchenware import Mug
 from bigym.utils.env_utils import get_random_sites
+from bigym.utils.observation_config import ObservationConfig
+
+
+def _bigym_perturb_enabled() -> bool:
+    """Return True if task reset perturbation is enabled."""
+    value = os.getenv("BIGYM_DISABLE_PERTURB", "0").strip().lower()
+    return value not in {"1", "true", "yes", "on"}
 
 
 class _DishwasherCupsEnv(BiGymEnv, ABC):
@@ -79,12 +87,138 @@ class DishwasherUnloadCupsLong(DishwasherUnloadCups):
 
     _PRESET_PATH = PRESETS_PATH / "counter_dishwasher_wall_cabinet.yaml"
     _CUPS_COUNT = 1
-    _SITES_SLICE = 2
+    _SITE_PREFIX_COUNT = 4
+    _CUPS_ROT_BOUNDS = np.pi
+
+    _COUNTERTOP_Z_BOUNDS = 0.1
+    _WALL_CABINET_Z_BOUNDS = 0.2
+    _WALL_CABINET_YAW_RANGE = (0.0, np.pi)
     _TOLERANCE = 0.1
+
+    def __init__(
+        self,
+        action_mode,
+        observation_config: ObservationConfig = ObservationConfig(),
+        render_mode=None,
+        start_seed=None,
+        control_frequency: int = CONTROL_FREQUENCY_MAX,
+        robot_cls=None,
+        robot_kwargs=None,
+        reset_warmup_steps=None,
+    ):
+        resolved_robot_cls = robot_cls or self.DEFAULT_ROBOT
+        if robot_kwargs is None and getattr(resolved_robot_cls, "__name__", None) in {
+            "RBY1",
+            "RBY1FineManipulation",
+        }:
+            robot_kwargs = {
+                "base_perturb_x_range": (-0.5, 0.0),
+                "base_perturb_y_range": (-0.5, 0.0),
+                "base_perturb_yaw_range": (0.0, np.deg2rad(90.0)),
+            }
+
+        super().__init__(
+            action_mode=action_mode,
+            observation_config=observation_config,
+            render_mode=render_mode,
+            start_seed=start_seed,
+            control_frequency=control_frequency,
+            robot_cls=robot_cls,
+            robot_kwargs=robot_kwargs,
+            reset_warmup_steps=reset_warmup_steps,
+        )
 
     def _initialize_env(self):
         super()._initialize_env()
         self.wall_cabinet = self._preset.get_props(WallCabinet)[0]
+        self._countertop_base_poses = [
+            (
+                prop.body,
+                prop.body.get_position().copy(),
+                prop.body.get_quaternion().copy(),
+            )
+            for prop in [self.dishwasher, *self.cabinets]
+        ]
+
+        counter_centers = [
+            cabinet.counter.get_position().copy()
+            for cabinet in self.cabinets
+            if getattr(cabinet, "counter", None) is not None
+        ]
+        if counter_centers:
+            self._countertop_pivot_world_base = np.mean(
+                np.stack(counter_centers, axis=0), axis=0
+            )
+        else:
+            self._countertop_pivot_world_base = self.dishwasher.body.get_position().copy()
+
+        self._wall_cabinet_base_pos = self.wall_cabinet.body.get_position().copy()
+        self._wall_cabinet_base_quat = self.wall_cabinet.body.get_quaternion().copy()
+
+    def _set_countertop_pose(self, z_offset: float, yaw_offset: float):
+        yaw_quat = Quaternion(axis=[0, 0, 1], angle=yaw_offset)
+        rot = yaw_quat.rotation_matrix
+        pivot = self._countertop_pivot_world_base
+
+        for body, base_pos, base_quat in self._countertop_base_poses:
+            rel_pos = base_pos - pivot
+            new_pos = pivot + rot @ rel_pos
+            new_pos[2] += z_offset
+            new_quat = (yaw_quat * Quaternion(base_quat)).elements
+            body.set_position(new_pos, True)
+            body.set_quaternion(new_quat, True)
+
+    def _set_wall_cabinet_pose(self, z_offset: float, yaw_offset: float):
+        yaw_quat = Quaternion(axis=[0, 0, 1], angle=yaw_offset)
+        new_pos = self._wall_cabinet_base_pos.copy()
+        new_pos[2] += z_offset
+        new_quat = (yaw_quat * Quaternion(self._wall_cabinet_base_quat)).elements
+        self.wall_cabinet.body.set_position(new_pos, True)
+        self.wall_cabinet.body.set_quaternion(new_quat, True)
+
+    def _sample_cup_sites(self):
+        candidates = []
+        for site_set in self.dishwasher.tray_middle.site_sets:
+            candidates.extend(site_set[: self._SITE_PREFIX_COUNT])
+
+        if len(candidates) < len(self.cups):
+            raise ValueError(
+                "Not enough cup sites for DishwasherUnloadCupsLong reset."
+            )
+
+        candidates = np.array(candidates, dtype=object)
+        return np.random.choice(candidates, size=len(self.cups), replace=False).tolist()
+
+    def _on_reset(self):
+        if not _bigym_perturb_enabled():
+            self._set_countertop_pose(z_offset=0.0, yaw_offset=0.0)
+            self._set_wall_cabinet_pose(z_offset=0.0, yaw_offset=0.0)
+        else:
+            countertop_z_offset = np.random.uniform(
+                -self._COUNTERTOP_Z_BOUNDS, self._COUNTERTOP_Z_BOUNDS
+            )
+            self._set_countertop_pose(
+                z_offset=countertop_z_offset, yaw_offset=0.0
+            )
+
+            cabinet_z_offset = np.random.uniform(
+                -self._WALL_CABINET_Z_BOUNDS, self._WALL_CABINET_Z_BOUNDS
+            )
+            cabinet_yaw_offset = np.random.uniform(*self._WALL_CABINET_YAW_RANGE)
+            self._set_wall_cabinet_pose(
+                z_offset=cabinet_z_offset, yaw_offset=cabinet_yaw_offset
+            )
+
+        _DishwasherCupsEnv._on_reset(self)
+        sites = self._sample_cup_sites()
+        for site, cup in zip(sites, self.cups):
+            quat = Quaternion(axis=[1, 0, 0], angle=self._CUPS_ROT_X)
+            angle = np.random.uniform(-self._CUPS_ROT_BOUNDS, self._CUPS_ROT_BOUNDS)
+            quat *= Quaternion(axis=[0, 0, 1], angle=self._CUPS_ROT_Z + angle)
+            cup.body.set_quaternion(quat.elements, True)
+            pos = site.get_position().copy()
+            pos += self._CUPS_POS
+            cup.body.set_position(pos, True)
 
     def _success(self) -> bool:
         if not np.allclose(self.dishwasher.get_state(), 0, atol=self._TOLERANCE):
