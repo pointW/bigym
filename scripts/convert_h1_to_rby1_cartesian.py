@@ -27,7 +27,7 @@ from bigym.rby1_cartesian_action_mode_whole_body import (
 )
 from vr.ik.h1_upper_body_ik import Pose
 from bigym.const import HandSide
-from demonstrations.demo_store import DemoStore
+from demonstrations.demo_store import DemoStore, DemoNotFoundError
 from demonstrations.utils import Metadata
 from demonstrations.demo import Demo, DemoStep
 from bigym.robots.configs.h1 import H1
@@ -54,7 +54,10 @@ def detect_floating_dofs_from_demos(env_name: str) -> List[PelvisDof]:
         'StoreKitchenware',  # Storing items at different heights
         'GroceriesStoreLower', 'GroceriesStoreUpper',  # Different height storage
         'TakeCups', 'PutCups',  # Cup manipulation
-        'DishwasherOpen', 'DishwasherClose', 'DishwasherOpenTrays', 'DishwasherCloseTrays', 'DishwasherLoadCups', 'DishwasherLoadCutlery', 'DishwasherLoadPlates', 'DishwasherUnloadCups', 'DishwasherUnloadCutlery', 'DishwasherUnloadPlates', 'DishwasherUnloadPlatesLong',
+        'DishwasherOpen', 'DishwasherClose', 'DishwasherOpenTrays', 'DishwasherCloseTrays',
+        'DishwasherLoadCups', 'DishwasherLoadCutlery', 'DishwasherLoadPlates',
+        'DishwasherUnloadCups', 'DishwasherUnloadCutlery', 'DishwasherUnloadPlates',
+        'DishwasherUnloadCupsLong', 'DishwasherUnloadCutleryLong', 'DishwasherUnloadPlatesLong',
     }
     
     # Default to 3 DOF (X, Y, RZ) for most tasks
@@ -63,6 +66,11 @@ def detect_floating_dofs_from_demos(env_name: str) -> List[PelvisDof]:
         return [PelvisDof.X, PelvisDof.Y, PelvisDof.Z, PelvisDof.RZ]
     else:
         return [PelvisDof.X, PelvisDof.Y, PelvisDof.RZ]
+
+
+def _dof_label(floating_dofs: List[PelvisDof]) -> str:
+    """Return a readable floating-DOF label."""
+    return "4 DOF (X,Y,Z,RZ)" if len(floating_dofs) == 4 else "3 DOF (X,Y,RZ)"
 
 
 def get_environment_class(env_name: str) -> Type:
@@ -74,72 +82,63 @@ def get_environment_class(env_name: str) -> Type:
     Returns:
         Environment class
     """
-    # Map of environment names to their module paths - based on available demos
+    # Map of environment names to (module_path, class_name override).
+    # class_name is omitted when it matches env_name.
     env_modules = {
         # Core environments
-        'ReachTarget': 'bigym.envs.reach_target',
-        'ReachTargetSingle': 'bigym.envs.reach_target',
-        'ReachTargetDual': 'bigym.envs.reach_target',
-        'MovePlate': 'bigym.envs.move_plates',
-        'MovePlates': 'bigym.envs.move_plates',  # Alias
-        'MoveTwoPlates': 'bigym.envs.move_plates',
+        'ReachTarget': ('bigym.envs.reach_target', None),
+        'ReachTargetSingle': ('bigym.envs.reach_target', None),
+        'ReachTargetDual': ('bigym.envs.reach_target', None),
+        'MovePlate': ('bigym.envs.move_plates', None),
+        'MovePlates': ('bigym.envs.move_plates', 'MovePlate'),  # Alias
+        'MoveTwoPlates': ('bigym.envs.move_plates', None),
         
         # Dishwasher tasks
-        'DishwasherOpen': 'bigym.envs.dishwasher',
-        'DishwasherClose': 'bigym.envs.dishwasher',
-        'DishwasherOpenTrays': 'bigym.envs.dishwasher',
-        'DishwasherCloseTrays': 'bigym.envs.dishwasher',
-        'DishwasherLoadCups': 'bigym.envs.dishwasher_cups',
-        'DishwasherLoadCutlery': 'bigym.envs.dishwasher',
-        'DishwasherLoadPlates': 'bigym.envs.dishwasher',
-        'DishwasherUnloadCups': 'bigym.envs.dishwasher',
-        'DishwasherUnloadCupsLong': 'bigym.envs.dishwasher',
-        'DishwasherUnloadCutlery': 'bigym.envs.dishwasher',
-        'DishwasherUnloadCutleryLong': 'bigym.envs.dishwasher',
-        'DishwasherUnloadPlates': 'bigym.envs.dishwasher',
-        'DishwasherUnloadPlatesLong': 'bigym.envs.dishwasher',
+        'DishwasherOpen': ('bigym.envs.dishwasher', None),
+        'DishwasherClose': ('bigym.envs.dishwasher', None),
+        'DishwasherOpenTrays': ('bigym.envs.dishwasher', None),
+        'DishwasherCloseTrays': ('bigym.envs.dishwasher', None),
+        'DishwasherLoadCups': ('bigym.envs.dishwasher_cups', None),
+        'DishwasherLoadCutlery': ('bigym.envs.dishwasher_cutlery', None),
+        'DishwasherLoadPlates': ('bigym.envs.dishwasher_plates', None),
+        'DishwasherUnloadCups': ('bigym.envs.dishwasher_cups', None),
+        'DishwasherUnloadCupsLong': ('bigym.envs.dishwasher_cups', None),
+        'DishwasherUnloadCutlery': ('bigym.envs.dishwasher_cutlery', None),
+        'DishwasherUnloadCutleryLong': ('bigym.envs.dishwasher_cutlery', None),
+        'DishwasherUnloadPlates': ('bigym.envs.dishwasher_plates', None),
+        'DishwasherUnloadPlatesLong': ('bigym.envs.dishwasher_plates', None),
         
         # Manipulation tasks
-        'FlipCup': 'bigym.envs.manipulation',
-        'FlipCutlery': 'bigym.envs.manipulation',
-        'FlipSandwich': 'bigym.envs.manipulation',
-        'StackBlocks': 'bigym.envs.manipulation',
+        'FlipCup': ('bigym.envs.manipulation', None),
+        'FlipCutlery': ('bigym.envs.manipulation', None),
+        'FlipSandwich': ('bigym.envs.pick_and_place', None),
+        'StackBlocks': ('bigym.envs.manipulation', None),
         
-        # Kitchen tasks
-        'ToastSandwich': 'bigym.envs.kitchen',
-        'RemoveSandwich': 'bigym.envs.kitchen',
-        'SaucepanToHob': 'bigym.envs.kitchen',
-        
-        # Storage tasks
-        'StoreBox': 'bigym.envs.storage',
-        'PickBox': 'bigym.envs.storage',
-        'StoreKitchenware': 'bigym.envs.storage',
-        'GroceriesStoreLower': 'bigym.envs.storage',
-        'GroceriesStoreUpper': 'bigym.envs.storage',
-        'TakeCups': 'bigym.envs.pick_and_place',
-        'PutCups': 'bigym.envs.storage',
+        # Pick and place tasks
+        'ToastSandwich': ('bigym.envs.pick_and_place', None),
+        'RemoveSandwich': ('bigym.envs.pick_and_place', None),
+        'SaucepanToHob': ('bigym.envs.pick_and_place', None),
+        'StoreBox': ('bigym.envs.pick_and_place', None),
+        'PickBox': ('bigym.envs.pick_and_place', None),
+        'StoreKitchenware': ('bigym.envs.pick_and_place', None),
+        'TakeCups': ('bigym.envs.pick_and_place', None),
+        'PutCups': ('bigym.envs.pick_and_place', None),
+
+        # Groceries tasks
+        'GroceriesStoreLower': ('bigym.envs.groceries', None),
+        'GroceriesStoreUpper': ('bigym.envs.groceries', None),
         
         # Cupboard/Drawer tasks
-        'CupboardsOpenAll': 'bigym.envs.cupboards',
-        'CupboardsCloseAll': 'bigym.envs.cupboards',
-        'WallCupboardOpen': 'bigym.envs.cupboards',
-        'WallCupboardClose': 'bigym.envs.cupboards',
-        'DrawersAllOpen': 'bigym.envs.drawers',
-        'DrawersAllClose': 'bigym.envs.drawers',
-        'DrawerTopOpen': 'bigym.envs.drawers',
-        'DrawerTopClose': 'bigym.envs.drawers',
+        'CupboardsOpenAll': ('bigym.envs.cupboards', None),
+        'CupboardsCloseAll': ('bigym.envs.cupboards', None),
+        'WallCupboardOpen': ('bigym.envs.cupboards', None),
+        'WallCupboardClose': ('bigym.envs.cupboards', None),
+        'DrawersAllOpen': ('bigym.envs.cupboards', None),
+        'DrawersAllClose': ('bigym.envs.cupboards', None),
+        'DrawerTopOpen': ('bigym.envs.cupboards', None),
+        'DrawerTopClose': ('bigym.envs.cupboards', None),
     }
-    
-    # Handle special cases and determine actual class name
-    if env_name == 'MovePlates':
-        class_name = 'MovePlate'
-    elif env_name == 'MoveTwoPlates':
-        class_name = 'MovePlate'  # Might be same class with different config
-    elif env_name.startswith('ReachTarget'):
-        class_name = 'ReachTarget'  # All reach variants use same class
-    else:
-        class_name = env_name
-    
+
     if env_name not in env_modules:
         # Try to import from bigym.envs directly
         module_name = f"bigym.envs.{env_name.lower()}"
@@ -155,7 +154,9 @@ def get_environment_class(env_name: str) -> Type:
             except (ImportError, AttributeError):
                 raise ValueError(f"Unknown environment: {env_name}")
     
-    module = importlib.import_module(env_modules[env_name])
+    module_name, class_override = env_modules[env_name]
+    class_name = class_override or env_name
+    module = importlib.import_module(module_name)
     return getattr(module, class_name)
 
 
@@ -440,23 +441,33 @@ def convert_h1_demo_to_rby1_cartesian(
             cam.pcd_max_dist = pcd_max_dist
             cam.pcd_min_world_z = pcd_min_world_z
     
-    # Detect the correct floating DOFs for this environment
-    floating_dofs = detect_floating_dofs_from_demos(env_name)
-    dof_str = "4 DOF (X,Y,Z,RZ)" if len(floating_dofs) == 4 else "3 DOF (X,Y,RZ)"
+    # Replay source demo with the exact action-mode / robot metadata.
+    source_env_data = original_demo.metadata.environment_data
+    source_floating_dofs = [PelvisDof(dof) for dof in source_env_data.floating_dofs]
+    source_absolute = (
+        True
+        if source_env_data.action_mode_absolute is None
+        else bool(source_env_data.action_mode_absolute)
+    )
+    source_robot_cls = original_demo.metadata.robot_cls
+    dof_str = _dof_label(source_floating_dofs)
     print(f"Converting H1 demo with {len(joint_actions)} steps to RBY1 Cartesian format...")
-    print(f"Using {dof_str} floating base for {env_name}")
+    print(
+        f"Using source metadata for replay: {dof_str}, "
+        f"absolute={source_absolute}, robot={source_robot_cls.__name__}"
+    )
     
     # Create H1 environment for replaying the demo with appropriate floating DOFs
     h1_env = env_class(
         action_mode=JointPositionActionMode(
-            floating_base=True, 
-            absolute=True,
-            floating_dofs=floating_dofs
+            floating_base=source_env_data.floating_base,
+            absolute=source_absolute,
+            floating_dofs=source_floating_dofs,
         ),
         control_frequency=control_frequency,
         observation_config=ObservationConfig(cameras=[]),
         render_mode=render_mode,
-        robot_cls=H1  # Use H1 robot class to replay original demo
+        robot_cls=source_robot_cls,
     )
     
     prev_bigym_disable_perturb = os.getenv("BIGYM_DISABLE_PERTURB")
@@ -770,36 +781,87 @@ def convert_h1_demos_batch(
     print(f"Converting {demo_amount} H1 {env_name} demonstrations to RBY1 Cartesian format...")
     print(f"Output directory: {output_dir}")
     
-    # Detect the correct floating DOFs for this environment
-    floating_dofs = detect_floating_dofs_from_demos(env_name)
-    dof_str = "4 DOF (X,Y,Z,RZ)" if len(floating_dofs) == 4 else "3 DOF (X,Y,RZ)"
-    print(f"Detected floating base configuration: {dof_str}")
-    
-    # Create H1 environment to load demos with appropriate floating DOFs
-    h1_env = env_class(
-        action_mode=JointPositionActionMode(
-            floating_base=True, 
-            absolute=True,
-            floating_dofs=floating_dofs
-        ),
-        control_frequency=control_frequency,
-        observation_config=ObservationConfig(cameras=[]),
-        render_mode=render_mode,
-        robot_cls=H1  # Load H1 demos with H1 robot class
+    # Detect preferred floating DOFs and fallback candidates.
+    preferred_dofs = detect_floating_dofs_from_demos(env_name)
+    fallback_dofs = (
+        [PelvisDof.X, PelvisDof.Y, PelvisDof.RZ]
+        if len(preferred_dofs) == 4
+        else [PelvisDof.X, PelvisDof.Y, PelvisDof.Z, PelvisDof.RZ]
     )
-    
-    # Load original H1 demos
+    dof_candidates = [preferred_dofs]
+    if fallback_dofs != preferred_dofs:
+        dof_candidates.append(fallback_dofs)
+    print(f"Preferred floating base configuration: {_dof_label(preferred_dofs)}")
+
+    # Try default robot first, then H1 for legacy paths.
+    robot_candidates: list[Type] = [env_class.DEFAULT_ROBOT]
+    if env_class.DEFAULT_ROBOT != H1:
+        robot_candidates.append(H1)
+    absolute_candidates = [True, False]
+
+    # Load original H1 demos, retrying with alternate floating DOFs when needed.
     print("Loading original H1 joint demonstrations...")
-    demo_store = DemoStore()
-    h1_metadata = Metadata.from_env(h1_env)
+    cache_root_env = os.getenv("BIGYM_CACHE_ROOT")
+    if cache_root_env:
+        cache_root = Path(cache_root_env).expanduser()
+        print(f"Using DemoStore cache root override: {cache_root}")
+        demo_store = DemoStore(cache_root=cache_root)
+    else:
+        demo_store = DemoStore()
     demo_amount = -1 if source_seed is not None else demo_amount
-    original_demos = demo_store.get_demos(
-        h1_metadata,
-        amount=demo_amount,
-        frequency=control_frequency,
-    )
-    
-    h1_env.close()
+    original_demos = None
+    last_error: Optional[Exception] = None
+    attempt_idx = 0
+    for floating_dofs in dof_candidates:
+        for absolute in absolute_candidates:
+            for robot_cls in robot_candidates:
+                attempt_idx += 1
+                if attempt_idx > 1:
+                    print(
+                        "Retrying demo lookup with "
+                        f"{_dof_label(floating_dofs)}, absolute={absolute}, "
+                        f"robot={robot_cls.__name__}..."
+                    )
+                h1_env = env_class(
+                    action_mode=JointPositionActionMode(
+                        floating_base=True,
+                        absolute=absolute,
+                        floating_dofs=floating_dofs,
+                    ),
+                    control_frequency=control_frequency,
+                    observation_config=ObservationConfig(cameras=[]),
+                    render_mode=render_mode,
+                    robot_cls=robot_cls,
+                )
+                try:
+                    h1_metadata = Metadata.from_env(h1_env)
+                    original_demos = demo_store.get_demos(
+                        h1_metadata,
+                        amount=demo_amount,
+                        frequency=control_frequency,
+                    )
+                    print(
+                        "Using source lookup config: "
+                        f"{_dof_label(floating_dofs)}, absolute={absolute}, "
+                        f"robot={robot_cls.__name__}"
+                    )
+                    break
+                except DemoNotFoundError as exc:
+                    last_error = exc
+                    original_demos = None
+                finally:
+                    h1_env.close()
+            if original_demos is not None:
+                break
+        if original_demos is not None:
+            break
+
+    if original_demos is None:
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError(
+            f"Failed to load source demos for env={env_name}. No DOF configuration matched."
+        )
     
     if source_seed is not None:
         original_demos = [d for d in original_demos if d.seed == source_seed]
@@ -927,7 +989,7 @@ def convert_h1_demos_batch(
     success_idx = 0
     failure_idx = 0
     output_path = Path(output_dir)
-    output_path.mkdir(exist_ok=True)
+    output_path.mkdir(parents=True, exist_ok=True)
 
     for i, result in enumerate(results):
         success, rby1_demo, error = result or (False, None, "No result returned.")
