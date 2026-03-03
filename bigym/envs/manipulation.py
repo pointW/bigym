@@ -92,6 +92,7 @@ class FlipCup(_ManipulationEnv):
     _TABLE_Z_BOUNDS = 0.1
     _TABLE_YAW_BOUNDS = np.pi
     _CUP_TABLE_CONTACT_EPS = 1.0e-4
+    _PCD_SURFACE_KEEP_EPS = 3.0e-3
 
     _TOLERANCE = np.deg2rad(5)
 
@@ -136,6 +137,14 @@ class FlipCup(_ManipulationEnv):
             if self.robot.is_gripper_holding_object(self.cup, side):
                 return False
         return True
+
+    def _get_reset_pcd_min_world_z(self):
+        """Keep table-surface and above by using current counter top height."""
+        counter_size = np.asarray(self.cabinet.counter.mjcf.size, dtype=np.float64)
+        if counter_size.size < 3:
+            return None
+        top_z = float(self.cabinet.counter.get_position()[2] + counter_size[2])
+        return top_z - self._PCD_SURFACE_KEEP_EPS
 
     def _on_reset(self):
         perturb_enabled = _bigym_perturb_enabled()

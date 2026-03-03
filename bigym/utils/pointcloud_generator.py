@@ -72,6 +72,7 @@ def depth_rgb_to_world_pcd(
     rng: np.random.Generator,
     min_dist: float | None = None,
     max_dist: float | None = None,
+    min_world_z: float | None = None,
 ) -> np.ndarray:
     """Create an XYZRGB point cloud in world frame from camera depth / rgb."""
     if depth is None or rgb is None:
@@ -127,6 +128,13 @@ def depth_rgb_to_world_pcd(
     if colors.shape[1] != 3:
         colors = colors[:, :3]
 
+    if min_world_z is not None:
+        keep = pts_world[:, 2] >= float(min_world_z)
+        if not np.any(keep):
+            return np.zeros((n_points, 6), dtype=np.float32)
+        pts_world = pts_world[keep]
+        colors = colors[keep]
+
     total = pts_world.shape[0]
     replace = total < n_points
     idx = rng.choice(total, size=n_points, replace=replace)
@@ -181,6 +189,7 @@ def generate(
     rng: Optional[np.random.Generator] = None,
     min_dist: float | None = None,
     max_dist: float | None = None,
+    min_world_z: float | None = None,
 ) -> np.ndarray:
     """Generate world-frame XYZRGB pointcloud for one camera."""
     if depth is None or rgb is None:
@@ -211,6 +220,7 @@ def generate(
         rng=rng,
         min_dist=min_dist,
         max_dist=max_dist,
+        min_world_z=min_world_z,
     )
 
 
@@ -245,6 +255,7 @@ class PointCloudGenerator:
         n_points: int,
         min_dist: float | None = None,
         max_dist: float | None = None,
+        min_world_z: float | None = None,
     ) -> np.ndarray:
         """Generate world-frame XYZRGB pointcloud for one camera."""
         return generate(
@@ -259,4 +270,5 @@ class PointCloudGenerator:
             rng=self._rng,
             min_dist=min_dist,
             max_dist=max_dist,
+            min_world_z=min_world_z,
         )

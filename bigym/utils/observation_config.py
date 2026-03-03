@@ -13,6 +13,7 @@ class CameraConfig:
     pcd_points: int = 1024
     pcd_min_dist: Optional[float] = None
     pcd_max_dist: Optional[float] = 3.0
+    pcd_min_world_z: Optional[float] = None
     resolution: tuple[int, int] = (128, 128)
     pos: Optional[tuple[float, float, float]] = None
     quat: Optional[tuple[float, float, float, float]] = None

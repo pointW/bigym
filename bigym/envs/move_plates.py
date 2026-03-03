@@ -45,6 +45,7 @@ class _MovePlatesEnv(BiGymEnv, ABC):
     _SUCCESS_ROT = np.deg2rad(20)
 
     _PLATES_COUNT = 1
+    _PCD_SURFACE_KEEP_EPS = 3.0e-3
 
     def _initialize_env(self):
         self.table = self._preset.get_props(Table)[0]
@@ -89,6 +90,13 @@ class _MovePlatesEnv(BiGymEnv, ABC):
             if plate.is_colliding(self.floor):
                 return True
         return False
+
+    def _get_reset_pcd_min_world_z(self):
+        """Keep table-surface and above using current table collider geometry."""
+        max_z = self._max_world_z_from_colliders(self.table.colliders)
+        if max_z is not None:
+            return float(max_z) - self._PCD_SURFACE_KEEP_EPS
+        return float(self.table.body.get_position()[2]) - self._PCD_SURFACE_KEEP_EPS
 
     def _on_reset(self):
         if not _bigym_perturb_enabled():

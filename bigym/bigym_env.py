@@ -21,7 +21,7 @@ from bigym.robots.robot import Robot
 from bigym.bigym_renderer import BiGymRenderer
 from bigym.utils.callables_cache import CallablesCache
 from bigym.utils.env_health import EnvHealth
-from bigym.utils.observation_config import ObservationConfig
+from bigym.utils.observation_config import ObservationConfig, CameraConfig
 from bigym.utils.pointcloud_generator import PointCloudGenerator
 
 CONTROL_FREQUENCY_MAX = 500
@@ -51,6 +51,7 @@ class BiGymEnv(gym.Env):
 
     RESET_ROBOT_POS = np.array([0, 0, 0])
     RESET_ROBOT_QUAT = np.array([1, 0, 0, 0])
+    DEFAULT_PCD_MIN_WORLD_Z = 0.01
 
     def __init__(
         self,
@@ -140,6 +141,7 @@ class BiGymEnv(gym.Env):
         self._cameras_map = self._initialize_cameras()
         self._pointcloud_generator: Optional[PointCloudGenerator] = None
         self._initialize_pointcloud_generator()
+        self._reset_pcd_min_world_z: Optional[float] = None
 
         self.mujoco_renderer: Optional[BiGymRenderer] = None
         self.obs_renderers: Optional[dict[tuple[int, int], mujoco.Renderer]] = {}
@@ -277,6 +279,70 @@ class BiGymEnv(gym.Env):
             )
         else:
             self._pointcloud_generator = None
+
+    @staticmethod
+    def _max_world_z_for_geom_id(model: Any, data: Any, geom_id: int) -> float:
+        """Estimate max world-z of a geom surface."""
+        geom_type = int(model.geom_type[geom_id])
+        geom_xpos = np.asarray(data.geom_xpos[geom_id], dtype=np.float64)
+        geom_xmat = np.asarray(data.geom_xmat[geom_id], dtype=np.float64).reshape(3, 3)
+
+        if geom_type == int(mujoco.mjtGeom.mjGEOM_MESH):
+            mesh_id = int(model.geom_dataid[geom_id])
+            if mesh_id >= 0:
+                vert_adr = int(model.mesh_vertadr[mesh_id])
+                vert_num = int(model.mesh_vertnum[mesh_id])
+                if vert_num > 0:
+                    verts = np.asarray(
+                        model.mesh_vert[vert_adr : vert_adr + vert_num],
+                        dtype=np.float64,
+                    )
+                    # MuJoCo mesh geoms apply optional per-geom scaling via geom_size.
+                    geom_scale = np.asarray(model.geom_size[geom_id], dtype=np.float64)
+                    scale = np.where(geom_scale > 0.0, geom_scale, 1.0)
+                    verts = verts * scale.reshape(1, 3)
+                    world = verts @ geom_xmat.T + geom_xpos.reshape(1, 3)
+                    return float(np.max(world[:, 2]))
+
+        return float(geom_xpos[2] + float(model.geom_rbound[geom_id]))
+
+    def _max_world_z_from_colliders(self, colliders: list[Geom]) -> Optional[float]:
+        """Estimate highest world-z among a list of colliders."""
+        if not colliders:
+            return None
+        model = self._mojo.physics.model._model
+        data = self._mojo.physics.data._data
+        max_z: Optional[float] = None
+        for collider in colliders:
+            try:
+                geom_id = int(collider.id)
+            except Exception:
+                continue
+            if geom_id < 0:
+                continue
+            z = self._max_world_z_for_geom_id(model, data, geom_id)
+            max_z = z if max_z is None else max(max_z, z)
+        return max_z
+
+    def _get_reset_pcd_min_world_z(self) -> Optional[float]:
+        """Override in task envs when pointcloud z-cut depends on reset state."""
+        return None
+
+    def _resolve_camera_pcd_min_world_z(self, camera_config: CameraConfig) -> Optional[float]:
+        """Resolve per-camera min-z filter; reset override takes priority."""
+        if self._reset_pcd_min_world_z is not None:
+            return self._reset_pcd_min_world_z
+        if camera_config.pcd_min_world_z is not None:
+            return camera_config.pcd_min_world_z
+        return float(self.DEFAULT_PCD_MIN_WORLD_Z)
+
+    def _update_reset_pcd_min_world_z(self) -> None:
+        """Refresh reset-dependent pointcloud z-cut for the current episode."""
+        if not any(cam.pcd for cam in self._observation_config.cameras):
+            self._reset_pcd_min_world_z = None
+            return
+        value = self._get_reset_pcd_min_world_z()
+        self._reset_pcd_min_world_z = None if value is None else float(value)
 
     def _initialize_env(self):
         """Can be overwritten to add task specific items to scene."""
@@ -581,6 +647,7 @@ class BiGymEnv(gym.Env):
                     n_points=camera_config.pcd_points,
                     min_dist=camera_config.pcd_min_dist,
                     max_dist=camera_config.pcd_max_dist,
+                    min_world_z=self._resolve_camera_pcd_min_world_z(camera_config),
                 )
                 obs[f"pcd_{camera_config.name}"] = pcd
 
@@ -660,6 +727,7 @@ class BiGymEnv(gym.Env):
         self._action = np.zeros_like(self._action)
         self._robot.reset(self.RESET_ROBOT_POS, self.RESET_ROBOT_QUAT)
         self._on_reset()
+        self._update_reset_pcd_min_world_z()
         warmup_steps = self._reset_warmup_steps
         if options is not None and "reset_warmup_steps" in options:
             warmup_steps = self._validate_reset_warmup_steps(

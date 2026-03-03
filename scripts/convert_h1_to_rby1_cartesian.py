@@ -395,6 +395,7 @@ def convert_h1_demo_to_rby1_cartesian(
     pcd_points: int = 1024,
     pcd_min_dist: Optional[float] = None,
     pcd_max_dist: Optional[float] = 3.0,
+    pcd_min_world_z: Optional[float] = 0.01,
     warmup_steps: int = 55,
 ) -> Tuple[Demo, bool]:
     """Convert a single H1 joint demo to RBY1 Cartesian demo.
@@ -416,6 +417,7 @@ def convert_h1_demo_to_rby1_cartesian(
         pcd_points: Number of points to sample per camera
         pcd_min_dist: Minimum camera distance (meters) to keep points
         pcd_max_dist: Maximum camera distance (meters) to keep points
+        pcd_min_world_z: Minimum world-frame z (meters) to keep point-cloud points
         warmup_steps: Number of stabilization steps after RBY1 reset.
             Warmup steps are not recorded in the output demo.
         
@@ -436,6 +438,7 @@ def convert_h1_demo_to_rby1_cartesian(
             cam.pcd_points = int(pcd_points)
             cam.pcd_min_dist = pcd_min_dist
             cam.pcd_max_dist = pcd_max_dist
+            cam.pcd_min_world_z = pcd_min_world_z
     
     # Detect the correct floating DOFs for this environment
     floating_dofs = detect_floating_dofs_from_demos(env_name)
@@ -632,6 +635,7 @@ def _convert_demo_worker(
         int,
         Optional[float],
         Optional[float],
+        Optional[float],
         int,
     ]
 ) -> Tuple[int, bool, Optional[Demo], Optional[str]]:
@@ -652,6 +656,7 @@ def _convert_demo_worker(
         pcd_points,
         pcd_min_dist,
         pcd_max_dist,
+        pcd_min_world_z,
         warmup_steps,
     ) = payload
     try:
@@ -672,6 +677,7 @@ def _convert_demo_worker(
             pcd_points=pcd_points,
             pcd_min_dist=pcd_min_dist,
             pcd_max_dist=pcd_max_dist,
+            pcd_min_world_z=pcd_min_world_z,
             warmup_steps=warmup_steps,
         )
         return index, success, rby1_demo, None
@@ -701,6 +707,7 @@ def convert_h1_demos_batch(
     pcd_points: int = 1024,
     pcd_min_dist: Optional[float] = None,
     pcd_max_dist: Optional[float] = 3.0,
+    pcd_min_world_z: Optional[float] = 0.01,
     warmup_steps: int = 55,
 ) -> List[Demo]:
     """Convert a batch of H1 demonstrations to RBY1 Cartesian format.
@@ -727,6 +734,7 @@ def convert_h1_demos_batch(
         pcd_points: Number of points to sample per camera
         pcd_min_dist: Minimum camera distance (meters) to keep points
         pcd_max_dist: Maximum camera distance (meters) to keep points
+        pcd_min_world_z: Minimum world-frame z (meters) to keep point-cloud points
         warmup_steps: Number of stabilization steps after RBY1 reset.
         
     Returns:
@@ -751,6 +759,7 @@ def convert_h1_demos_batch(
             cam.pcd_points = int(pcd_points)
             cam.pcd_min_dist = pcd_min_dist
             cam.pcd_max_dist = pcd_max_dist
+            cam.pcd_min_world_z = pcd_min_world_z
     
     # Auto-generate output directory name if not provided
     if output_dir is None:
@@ -831,6 +840,7 @@ def convert_h1_demos_batch(
                     pcd_points,
                     pcd_min_dist,
                     pcd_max_dist,
+                    pcd_min_world_z,
                     warmup_steps,
                 )
             )
@@ -887,6 +897,7 @@ def convert_h1_demos_batch(
                 pcd_points,
                 pcd_min_dist,
                 pcd_max_dist,
+                pcd_min_world_z,
                 warmup_steps,
             ) = payload
             try:
@@ -906,6 +917,7 @@ def convert_h1_demos_batch(
                     pcd_points=pcd_points,
                     pcd_min_dist=pcd_min_dist,
                     pcd_max_dist=pcd_max_dist,
+                    pcd_min_world_z=pcd_min_world_z,
                     warmup_steps=warmup_steps,
                 )
                 results[index] = (success, rby1_demo, None)
@@ -1074,6 +1086,12 @@ def main():
         help="Maximum camera distance (meters) to keep points"
     )
     parser.add_argument(
+        "--pcd-min-world-z",
+        type=float,
+        default=0.01,
+        help="Minimum world-frame z (meters) to keep point-cloud points"
+    )
+    parser.add_argument(
         "--warmup-steps",
         type=int,
         default=55,
@@ -1104,6 +1122,7 @@ def main():
         pcd_points=args.pcd_points,
         pcd_min_dist=args.pcd_min_dist,
         pcd_max_dist=args.pcd_max_dist,
+        pcd_min_world_z=args.pcd_min_world_z,
         warmup_steps=args.warmup_steps,
     )
     
