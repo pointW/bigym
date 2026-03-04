@@ -3,50 +3,19 @@
 This solver optimizes both base movement and joint positions to reach end-effector targets,
 while maintaining stability and upright posture constraints.
 """
+from pathlib import Path
 import numpy as np
 from typing import Optional, Tuple, Dict
 import mujoco
 import mink
 from mink import Limit, Constraint
+from yaml import safe_load
 
-EE_POS_COST = 10000
-EE_ORI_COST = 10000
-# BASE_POS_COST = [100.0, 100.0, 1e5]
-# BASE_ORI_COST = [1e5, 1e5, 100.0]
-TORSO_UPRIGHT_ORI_COST = 1000
-POSTURE_COST_MAIN = 100.0
-POSTURE_COST_TORSO_BIAS = 50.0
-COM_OVER_BASE_POS_COST = 100.0
-
-SAFETY_DISTANCE = 0.01         # m, keep at least this clearance
-INFLUENCE_DISTANCE = 0.05      # m, start repulsion here
-BASE_XY_V_LIMIT = 1 # 1m/s
-BASE_RZ_V_LIMIT = np.pi/2 # 90°/s
-
-JOINT_VEL_LIMITS = {
-    "rby1/torso_0": np.deg2rad(120),
-    "rby1/torso_1": np.deg2rad(120),
-    "rby1/torso_2": np.deg2rad(180),
-    "rby1/torso_3": np.deg2rad(180),
-    "rby1/torso_4": np.deg2rad(180),
-    "rby1/torso_5": np.deg2rad(180),
-
-    "rby1/left_arm_0": np.deg2rad(180),
-    "rby1/left_arm_1": np.deg2rad(180),
-    "rby1/left_arm_2": np.deg2rad(180),
-    "rby1/left_arm_3": np.deg2rad(180),
-    "rby1/left_arm_4": np.deg2rad(360),
-    "rby1/left_arm_5": np.deg2rad(360),
-    "rby1/left_arm_6": np.deg2rad(360),
-
-    "rby1/right_arm_0": np.deg2rad(180),
-    "rby1/right_arm_1": np.deg2rad(180),
-    "rby1/right_arm_2": np.deg2rad(180),
-    "rby1/right_arm_3": np.deg2rad(180),
-    "rby1/right_arm_4": np.deg2rad(360),
-    "rby1/right_arm_5": np.deg2rad(360),
-    "rby1/right_arm_6": np.deg2rad(360),
-}
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "configs" / "rby1_wbik.yaml"
+EE_LM_DAMPING = 1e-5
+BASE_GROUND_LM_DAMPING = 1e-6
+TORSO_UPRIGHT_LM_DAMPING = 1e-4
+COM_STABILITY_LM_DAMPING = 1e-4
 
 class FreeJointVelocityLimit(Limit):
     model: mujoco.MjModel
@@ -107,13 +76,20 @@ class RBY1WholeBodyIK:
     4. COM stability within base support polygon (medium regularization)
     """
     
-    def __init__(self, model: mujoco.MjModel, data: mujoco.MjData):
+    def __init__(
+        self,
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        config_path: Optional[str | Path] = None,
+    ):
         """Initialize RBY1 whole-body IK solver.
         
         Args:
             model: MuJoCo model
             data: MuJoCo data
+            config_path: Optional YAML config path. Defaults to packaged config file.
         """
+        self._load_config(config_path)
         self.model = model
         self.data = mujoco.MjData(model)
         if data is not None:
@@ -146,6 +122,67 @@ class RBY1WholeBodyIK:
                                "link_wheel_rr", "link_wheel_rl"]
 
         self.environment_geoms = None
+
+    def _load_config(self, config_path: Optional[str | Path]) -> None:
+        """Load and validate IK parameters from a YAML config file."""
+        path = Path(config_path) if config_path is not None else DEFAULT_CONFIG_PATH
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                cfg = safe_load(f)
+        except Exception as exc:
+            raise RuntimeError(f"Failed to load IK config from '{path}': {exc}") from exc
+
+        if not isinstance(cfg, dict):
+            raise ValueError(f"IK config at '{path}' must be a mapping.")
+
+        def require(name: str):
+            if name not in cfg:
+                raise KeyError(f"Missing required IK config key: {name}")
+            return cfg[name]
+
+        def require_vec(name: str, size: int) -> np.ndarray:
+            vec = np.asarray(require(name), dtype=float).reshape(-1)
+            if vec.size != size:
+                raise ValueError(
+                    f"IK config key '{name}' must have length {size}, got {vec.size}"
+                )
+            return vec
+
+        self.ee_pos_cost = float(require("ee_pos_cost"))
+        self.ee_ori_cost = float(require("ee_ori_cost"))
+
+        self.base_ground_position_cost = require_vec("base_ground_position_cost", 3)
+        self.base_ground_orientation_cost = require_vec("base_ground_orientation_cost", 3)
+
+        self.torso_upright_ori_cost = float(require("torso_upright_ori_cost"))
+        self.torso_upright_target_position = require_vec("torso_upright_target_position", 3)
+
+        self.com_over_base_pos_cost = float(require("com_over_base_pos_cost"))
+        self.torso_relative_target = require_vec("torso_relative_target", 3)
+
+        self.posture_cost_main = float(require("posture_cost_main"))
+        self.posture_cost_torso_bias = float(require("posture_cost_torso_bias"))
+        self.torso_bias_reference = require_vec("torso_bias_reference", 6)
+
+        self.safety_distance = float(require("safety_distance"))
+        self.influence_distance = float(require("influence_distance"))
+
+        self.velocity_limit_scale = float(require("velocity_limit_scale"))
+        self.base_xy_velocity_limit = float(require("base_xy_velocity_limit"))
+        self.base_rz_velocity_limit = float(require("base_rz_velocity_limit"))
+        joint_velocity_limits = require("joint_velocity_limits")
+        if not isinstance(joint_velocity_limits, dict):
+            raise ValueError("IK config key 'joint_velocity_limits' must be a mapping.")
+        self.joint_velocity_limits = {
+            str(name): float(limit) for name, limit in joint_velocity_limits.items()
+        }
+        self.use_configuration_limit = bool(cfg.get("use_configuration_limit", False))
+        self.use_joint_velocity_limit = bool(cfg.get("use_joint_velocity_limit", False))
+        self.use_base_velocity_limit = bool(cfg.get("use_base_velocity_limit", False))
+
+        self.dt = float(require("dt"))
+        self.solver = str(require("solver"))
+        self.damping = float(require("damping"))
     
     def _setup_joint_indices(self):
         """Setup joint indices for different robot parts."""
@@ -213,6 +250,14 @@ class RBY1WholeBodyIK:
             self.left_arm_qpos_indices + 
             self.right_arm_qpos_indices
         )
+
+    def _resolve_joint_name_for_model(self, joint_name: str) -> str:
+        """Resolve configured joint name to the current model namespace style."""
+        if self.has_namespace:
+            return joint_name if joint_name.startswith("rby1/") else f"rby1/{joint_name}"
+        if joint_name.startswith("rby1/"):
+            return joint_name.split("/", 1)[1]
+        return joint_name
     
     def solve(
         self,
@@ -279,9 +324,9 @@ class RBY1WholeBodyIK:
             left_ee_task = mink.FrameTask(
                 frame_name=self.left_ee_name,
                 frame_type="site",
-                position_cost=EE_POS_COST,  # Highest priority
-                orientation_cost=EE_ORI_COST if left_target_quat is not None else 0.0,
-                lm_damping=1e-5,
+                position_cost=self.ee_pos_cost,
+                orientation_cost=self.ee_ori_cost if left_target_quat is not None else 0.0,
+                lm_damping=EE_LM_DAMPING,
             )
             
             if left_target_quat is not None:
@@ -296,9 +341,9 @@ class RBY1WholeBodyIK:
             right_ee_task = mink.FrameTask(
                 frame_name=self.right_ee_name,
                 frame_type="site",
-                position_cost=EE_POS_COST,  # Highest priority
-                orientation_cost=EE_ORI_COST if right_target_quat is not None else 0.0,
-                lm_damping=1e-5,
+                position_cost=self.ee_pos_cost,
+                orientation_cost=self.ee_ori_cost if right_target_quat is not None else 0.0,
+                lm_damping=EE_LM_DAMPING,
             )
             
             if right_target_quat is not None:
@@ -314,9 +359,9 @@ class RBY1WholeBodyIK:
         base_ground_task = mink.FrameTask(
             frame_name=self.base_name,
             frame_type="body",
-            position_cost=[0.0, 0.0, 100000.0],  # Allow X,Y movement, strongly constrain Z
-            orientation_cost=[100000.0, 100000.0, 0.0],  # Constrain roll/pitch, allow yaw
-            lm_damping=1e-6,
+            position_cost=self.base_ground_position_cost,
+            orientation_cost=self.base_ground_orientation_cost,
+            lm_damping=BASE_GROUND_LM_DAMPING,
         )
         # Set target to current X,Y but Z=0 and upright orientation with current yaw
         base_target_matrix = np.eye(4)
@@ -344,12 +389,12 @@ class RBY1WholeBodyIK:
             frame_name=self.torso5_name,
             frame_type="body",
             position_cost=0.0,  # Don't constrain position
-            orientation_cost=[TORSO_UPRIGHT_ORI_COST, TORSO_UPRIGHT_ORI_COST, 0],  # STRONG constraint to maintain upright posture
-            lm_damping=1e-4,
+            orientation_cost=[self.torso_upright_ori_cost, self.torso_upright_ori_cost, 0.0],
+            lm_damping=TORSO_UPRIGHT_LM_DAMPING,
         )
         # Set target to upright orientation (identity rotation)
         upright_matrix = np.eye(4)
-        upright_matrix[:3, 3] = [0, 0, 1.0]  # Dummy position (not used due to position_cost=0)
+        upright_matrix[:3, 3] = self.torso_upright_target_position
         torso_upright_task.set_target(mink.SE3.from_matrix(upright_matrix))
         tasks.append(torso_upright_task)
         
@@ -361,20 +406,20 @@ class RBY1WholeBodyIK:
             frame_type="body",
             root_name=self.base_name,
             root_type="body",
-            position_cost=COM_OVER_BASE_POS_COST,  # Medium cost for stability
+            position_cost=self.com_over_base_pos_cost,
             orientation_cost=0.0,  # Don't constrain relative orientation
-            lm_damping=1e-4,
+            lm_damping=COM_STABILITY_LM_DAMPING,
         )
         # Target: torso should be above base center with some tolerance
         relative_matrix = np.eye(4)
-        relative_matrix[:3, 3] = [0, 0, 0.8]  # Torso approximately 0.8m above base
+        relative_matrix[:3, 3] = self.torso_relative_target
         com_stability_task.set_target(mink.SE3.from_matrix(relative_matrix))
         tasks.append(com_stability_task)
         
         # 4. Main posture task
         posture_task = mink.PostureTask(
             model=self.model,
-            cost=POSTURE_COST_MAIN  
+            cost=self.posture_cost_main,
         )
         # Set reference posture
         reference_qpos = current_qpos.copy()   # torso_5: stay near 0
@@ -390,16 +435,12 @@ class RBY1WholeBodyIK:
 
         posture_task = mink.PostureTask(
             model=self.model,
-            cost=POSTURE_COST_TORSO_BIAS  # Lower cost - mainly for arm redundancy resolution
+            cost=self.posture_cost_torso_bias,
         )
         # Set reference posture
         reference_qpos = current_qpos.copy()
-        reference_qpos[11] = 0.0      # torso_0: stay near 0
-        reference_qpos[12] = 0.305    # torso_1: middle of [-0.175, 0.785]
-        reference_qpos[13] = -0.698   # torso_2: middle of [-1.571, 0.175]
-        reference_qpos[14] = 0.305    # torso_3: middle of [-0.175, 0.785]
-        reference_qpos[15] = 0.0      # torso_4: stay near 0
-        reference_qpos[16] = 0.0      # torso_5: stay near 0
+        for qpos_idx, reference_value in zip(self.torso_qpos_indices, self.torso_bias_reference):
+            reference_qpos[qpos_idx] = reference_value
         posture_task.set_target(reference_qpos)
         tasks.append(posture_task)
 
@@ -481,39 +522,51 @@ class RBY1WholeBodyIK:
         collision_avoidance_limit = mink.CollisionAvoidanceLimit(
             model=self.model,
             geom_pairs=geom_pairs,
-            minimum_distance_from_collisions=SAFETY_DISTANCE,
-            collision_detection_distance=INFLUENCE_DISTANCE,
+            minimum_distance_from_collisions=self.safety_distance,
+            collision_detection_distance=self.influence_distance,
         )
         limits.append(collision_avoidance_limit)
 
-        # # 7. Configuration limit
-        # limits.append(mink.ConfigurationLimit(self.model))
+        if self.use_configuration_limit:
+            limits.append(mink.ConfigurationLimit(self.model))
 
-        # # 8. Joint velocity limit
-        # joint_velocity_limits = copy.deepcopy(JOINT_VEL_LIMITS)
-        # for i in joint_velocity_limits:
-        #     joint_velocity_limits[i] = joint_velocity_limits[i] * 1000 / 50
-        # joint_velocity_limit = mink.VelocityLimit(self.model, joint_velocity_limits)
-        # limits.append(joint_velocity_limit)
+        if self.use_joint_velocity_limit:
+            resolved_joint_limits = {}
+            for joint_name, limit in self.joint_velocity_limits.items():
+                resolved_name = self._resolve_joint_name_for_model(joint_name)
+                joint_id = mujoco.mj_name2id(
+                    self.model, mujoco.mjtObj.mjOBJ_JOINT, resolved_name
+                )
+                if joint_id >= 0:
+                    resolved_joint_limits[resolved_name] = (
+                        float(limit) * self.velocity_limit_scale
+                    )
+            if resolved_joint_limits:
+                limits.append(mink.VelocityLimit(self.model, resolved_joint_limits))
 
-        # # 9. Base velocity limit
-        # free_joint_velocity_limit = FreeJointVelocityLimit(
-        #     self.model, 
-        #     0, 
-        #     ang_max=[0, 0, BASE_RZ_V_LIMIT * 1000 / 50], 
-        #     lin_max=[BASE_XY_V_LIMIT * 1000 / 50, BASE_XY_V_LIMIT * 1000 / 50, 0]
-        # )
-        # limits.append(free_joint_velocity_limit)
-
-        # Solver parameters
-        dt = 1e-3  # Integration timestep
-        solver = "daqp"
-        damping = 1e-6
+        if self.use_base_velocity_limit:
+            lin_limit = self.base_xy_velocity_limit * self.velocity_limit_scale
+            ang_limit = self.base_rz_velocity_limit * self.velocity_limit_scale
+            limits.append(
+                FreeJointVelocityLimit(
+                    self.model,
+                    self.base_joint_id,
+                    ang_max=[0.0, 0.0, ang_limit],
+                    lin_max=[lin_limit, lin_limit, 0.0],
+                )
+            )
         
         try:
-            vel = mink.solve_ik(configuration, tasks, dt, solver, damping, limits=limits)
+            vel = mink.solve_ik(
+                configuration,
+                tasks,
+                self.dt,
+                self.solver,
+                self.damping,
+                limits=limits,
+            )
             # vel = mink.solve_ik(configuration, tasks, dt, solver, damping)
-            configuration.integrate_inplace(vel, dt)
+            configuration.integrate_inplace(vel, self.dt)
             # Get solution
             solution_qpos = configuration.q.copy()
             success = True
