@@ -11,7 +11,7 @@ import mink
 from mink import Limit, Constraint
 from yaml import safe_load
 
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "configs" / "rby1_wbik.yaml"
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "rby1_wbik.yaml"
 EE_LM_DAMPING = 1e-5
 BASE_GROUND_LM_DAMPING = 1e-6
 TORSO_UPRIGHT_LM_DAMPING = 1e-4

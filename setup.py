@@ -52,7 +52,7 @@ setuptools.setup(
     package_data={
         "": [str(p.resolve()) for p in Path("bigym/envs/xmls").glob("**/*")]
         + [str(p.resolve()) for p in Path("bigym/envs/presets").glob("**/*.yaml")]
-        + [str(p.resolve()) for p in Path("bigym/ik/configs").glob("**/*.yaml")]
+        + [str(p.resolve()) for p in Path("bigym/config").glob("**/*.yaml")]
         + [str(p.resolve()) for p in Path("vr/viewer/xmls").glob("**/*")]
     },
     extras_require={

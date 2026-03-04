@@ -1,9 +1,11 @@
 """RBY1 Robot Configuration."""
 import logging
 import os
+from pathlib import Path
 import mujoco
 import numpy as np
 from mojo.elements.consts import JointType
+from yaml import safe_load
 
 from bigym.action_modes import PelvisDof
 from bigym.const import ASSETS_PATH, HandSide
@@ -17,6 +19,92 @@ from bigym.robots.config import (
 from bigym.robots.configs.robotiq import ROBOTIQ_2F85, ROBOTIQ_2F85_FINE_MANIPULATION
 from bigym.robots.robot import Robot
 from bigym.utils.dof import Dof
+
+_RBY1_WBC_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "rby1_wbc.yaml"
+
+
+def _load_rby1_wbc_config() -> dict:
+    try:
+        with _RBY1_WBC_CONFIG_PATH.open("r", encoding="utf-8") as f:
+            cfg = safe_load(f)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            f"Failed to load RBY1 WBC config at '{_RBY1_WBC_CONFIG_PATH}': {exc}"
+        ) from exc
+
+    if not isinstance(cfg, dict):
+        raise ValueError(f"RBY1 WBC config must be a mapping: {_RBY1_WBC_CONFIG_PATH}")
+    return cfg
+
+
+def require(mapping: dict, key: str):
+    if key not in mapping:
+        raise KeyError(f"Missing required RBY1 WBC config key: {key}")
+    return mapping[key]
+
+
+def require_vec(mapping: dict, key: str, size: int) -> np.ndarray:
+    vec = np.asarray(require(mapping, key), dtype=np.float64).reshape(-1)
+    if vec.size != size:
+        raise ValueError(f"Config key '{key}' must have length {size}, got {vec.size}")
+    return vec
+
+
+def require_range(mapping: dict, key: str) -> tuple[float, float]:
+    value = require(mapping, key)
+    if not isinstance(value, (list, tuple, np.ndarray)) or len(value) != 2:
+        raise ValueError(f"Config key '{key}' must be a list/tuple with 2 elements.")
+    low, high = float(value[0]), float(value[1])
+    if low > high:
+        raise ValueError(f"Config key '{key}' must satisfy min <= max, got {value}")
+    return low, high
+
+
+_RBY1_WBC_CFG = _load_rby1_wbc_config()
+_RBY1_INIT_POSITION_CFG = require(_RBY1_WBC_CFG, "init_position")
+_RBY1_PERTURB_CFG = require(_RBY1_WBC_CFG, "perturb_defaults")
+_RBY1_MOCAP_CFG = require(_RBY1_WBC_CFG, "mocap_base_target")
+_RBY1_FINE_CFG = require(_RBY1_WBC_CFG, "fine_manipulation")
+
+_RBY1_DELTA_RANGE = (-0.1, 0.1)
+_RBY1_POSITION_KP = 300.0
+_RBY1_CAMERAS = ["head", "left_wrist", "right_wrist"]
+
+_RBY1_INIT_TORSO = require_vec(_RBY1_INIT_POSITION_CFG, "torso", 6)
+_RBY1_INIT_RIGHT_ARM = require_vec(_RBY1_INIT_POSITION_CFG, "right_arm", 7)
+_RBY1_INIT_LEFT_ARM = require_vec(_RBY1_INIT_POSITION_CFG, "left_arm", 7)
+_RBY1_INIT_HEAD = require_vec(_RBY1_INIT_POSITION_CFG, "head", 2)
+_RBY1_INIT_GRIPPERS = require_vec(_RBY1_INIT_POSITION_CFG, "grippers", 2)
+_RBY1_RESET_STATE = np.concatenate(
+    [_RBY1_INIT_TORSO, _RBY1_INIT_RIGHT_ARM, _RBY1_INIT_LEFT_ARM]
+).astype(np.float64)
+
+RBY1_HEAD_DEFAULT_JOINT_POSITIONS = {
+    "head_0": float(_RBY1_INIT_HEAD[0]),
+    "head_1": float(_RBY1_INIT_HEAD[1]),
+}
+
+_BASE_PERTURB_X_RANGE = require_range(_RBY1_PERTURB_CFG, "base_x_range")
+_BASE_PERTURB_Y_RANGE = require_range(_RBY1_PERTURB_CFG, "base_y_range")
+_BASE_PERTURB_YAW_RANGE = require_range(_RBY1_PERTURB_CFG, "base_yaw_range")
+_EE_PERTURB_POS_RANGE = require_range(_RBY1_PERTURB_CFG, "ee_pos_range")
+_EE_PERTURB_ROT_RANGE = require_range(_RBY1_PERTURB_CFG, "ee_rot_range")
+
+_RBY1_MOCAP_POS = require_vec(_RBY1_MOCAP_CFG, "pos", 3).tolist()
+_RBY1_MOCAP_GEOM_CFG = require(_RBY1_MOCAP_CFG, "geom")
+_RBY1_MOCAP_GEOM_TYPE = str(require(_RBY1_MOCAP_GEOM_CFG, "type"))
+_RBY1_MOCAP_GEOM_SIZE = require_vec(_RBY1_MOCAP_GEOM_CFG, "size", 3).tolist()
+_RBY1_MOCAP_GEOM_CONTYPE = int(require(_RBY1_MOCAP_GEOM_CFG, "contype"))
+_RBY1_MOCAP_GEOM_CONAFFINITY = int(require(_RBY1_MOCAP_GEOM_CFG, "conaffinity"))
+_RBY1_MOCAP_GEOM_RGBA = require_vec(_RBY1_MOCAP_GEOM_CFG, "rgba", 4).tolist()
+_RBY1_MOCAP_WELD_CFG = require(require(_RBY1_MOCAP_CFG, "weld"), "rby1")
+_RBY1_FINE_MOCAP_WELD_CFG = require(require(_RBY1_MOCAP_CFG, "weld"), "fine")
+_RBY1_WELD_SOLIMP = np.asarray(require(_RBY1_MOCAP_WELD_CFG, "solimp"), dtype=np.float64).reshape(-1).tolist()
+_RBY1_WELD_SOLREF = np.asarray(require(_RBY1_MOCAP_WELD_CFG, "solref"), dtype=np.float64).reshape(-1).tolist()
+_RBY1_FINE_WELD_SOLIMP = np.asarray(require(_RBY1_FINE_MOCAP_WELD_CFG, "solimp"), dtype=np.float64).reshape(-1).tolist()
+_RBY1_FINE_WELD_SOLREF = np.asarray(require(_RBY1_FINE_MOCAP_WELD_CFG, "solref"), dtype=np.float64).reshape(-1).tolist()
+
+_RBY1_FINE_MODEL_SCALE = float(require(_RBY1_FINE_CFG, "model_scale"))
 
 
 # RBY1 has 7 DOF arms without explicit wrist joint at the end
@@ -81,115 +169,45 @@ RBY1_ACTUATORS = {
     "left_arm_6": True,
 }
 
-# Default neck pose used when the head is not actively controlled
-RBY1_HEAD_DEFAULT_JOINT_POSITIONS = {
-    "rby1/head_0": 0.0,    # keep head centered in yaw
-    # "rby1/head_1": 1.0,  
-    "rby1/head_1": 0.785398,  
-}
-
 # Full body configuration
 RBY1_FULL_BODY = FullBodyConfig(
-    offset_position=np.array([0, 0, 0]),  # Keep base at ground level for wheeled robot
-    # reset_state=np.array([
-    #     # Torso (6 DOF) - minimal movement for H1 pose match (position+orientation)
-    #     0.0296, 0.0177, 0.0000, -0.0177, -0.0296, -0.0000,
-    #     # Right arm (7 DOF) - matched to H1 pose (position+orientation) with scale=1.3
-    #     0.5381, 0.0500, 0.2096, -2.0186, 0.3451, -0.0468, -0.2460,
-    #     # 0.5100, -0.0967, 0.1544, -2.0225, -0.3253, 0.0430, 0.2704,
-    #     # Left arm (7 DOF) - matched to H1 pose (position+orientation) with scale=1.3
-    #     0.5100, 0.0967, -0.1544, -2.0225, 0.3253, -0.0430, -0.2704,
-    # ]),
-#     reset_state=np.array([
-#     # Torso (6 DOF) - fixed at zero
-#     0.0000,
-#     0.0000,
-#     0.0000,
-#     0.0000,
-#     0.0000,
-#     0.0000,
-#     # Right arm (7 DOF)
-#     0.3392,
-#     0.0284,
-#     0.2281,
-#     -1.2886,
-#     0.3424,
-#     0.2172,
-#     -0.2441,
-#     # Left arm (7 DOF)
-#     0.3329,
-#     -0.0017,
-#     -0.2026,
-#     -1.2914,
-#     0.3109,
-#     0.2232,
-#     -0.2684
-# ])
-reset_state=np.array([
-    # Torso (6 DOF) - fixed at zero
-    0.0000,
-    0.0000,
-    0.0000,
-    0.0000,
-    0.0000,
-    0.0000,
-    # Right arm (7 DOF)
-    0.4768,
-    -0.0089,
-    0.1617,
-    -1.9939,
-    0.3179,
-    -0.0256,
-    -0.2916,
-    # Left arm (7 DOF)
-    0.4706,
-    0.0405,
-    -0.1765,
-    -1.9902,
-    0.2878,
-    -0.0346,
-    -0.2912
-])
+    offset_position=np.zeros(3, dtype=np.float64),
+    reset_state=_RBY1_RESET_STATE,
 )
 
 # Main robot configuration
 RBY1_CONFIG = RobotConfig(
     model=ASSETS_PATH / "rby1" / "model_act_consolidated.xml",
-    delta_range=(-0.1, 0.1),
-    position_kp=300,
+    delta_range=_RBY1_DELTA_RANGE,
+    position_kp=_RBY1_POSITION_KP,
     pelvis_body="base",  # RBY1 base body
     full_body=RBY1_FULL_BODY,
     floating_base=None,  # RBY1 doesn't use floating base
     gripper=ROBOTIQ_2F85,  # Using H1 grippers for consistency
     arms={HandSide.LEFT: RBY1_LEFT_ARM, HandSide.RIGHT: RBY1_RIGHT_ARM},
     actuators=RBY1_ACTUATORS,
-    cameras=["head", "left_wrist", "right_wrist"],
+    cameras=_RBY1_CAMERAS,
     namespaces_to_remove=[],
 )
 
 # Fine manipulation variant with different gripper settings
 RBY1_FINE_MANIPULATION_CONFIG = RobotConfig(
     model=ASSETS_PATH / "rby1" / "model_act_consolidated.xml",
-    delta_range=(-0.1, 0.1),
-    position_kp=300,
+    delta_range=_RBY1_DELTA_RANGE,
+    position_kp=_RBY1_POSITION_KP,
     pelvis_body="base",
     full_body=RBY1_FULL_BODY,
     floating_base=None,  # RBY1 doesn't use floating base
     gripper=ROBOTIQ_2F85_FINE_MANIPULATION,
     arms={HandSide.LEFT: RBY1_LEFT_ARM, HandSide.RIGHT: RBY1_RIGHT_ARM},
     actuators=RBY1_ACTUATORS,
-    cameras=["head", "left_wrist", "right_wrist"],
+    cameras=_RBY1_CAMERAS,
     namespaces_to_remove=[],
 )
 
 
-# Small perturbations applied after reset (meters / radians)
-# Ranges are specified as (min, max).
-_BASE_PERTURB_X_RANGE = (-0.1, 0.1)  # base X jitter
-_BASE_PERTURB_Y_RANGE = (-0.1, 0.1)  # base Y jitter
-_BASE_PERTURB_YAW_RANGE = (-np.deg2rad(20.0), np.deg2rad(20.0))  # base yaw jitter
-_EE_PERTURB_POS_RANGE = (-0.1, 0.1)  # end-effector translational jitter
-_EE_PERTURB_ROT_RANGE = (-np.deg2rad(20.0), np.deg2rad(20.0))  # end-effector rotational jitter
+# Small perturbations applied after reset (meters / radians).
+# Task-specific constructor args override these config defaults.
 
 
 def _parse_range(value, name: str) -> tuple[float, float]:
@@ -475,6 +493,19 @@ def _apply_head_default_posture(mojo):
         mujoco.mj_forward(model, data)
 
 
+def _apply_gripper_default_posture(robot) -> None:
+    """Set default left/right gripper control targets."""
+    if robot is None or not getattr(robot, "_grippers", None):
+        return
+
+    left_gripper = robot.grippers.get(HandSide.LEFT)
+    right_gripper = robot.grippers.get(HandSide.RIGHT)
+    if left_gripper is not None:
+        left_gripper.set_control(float(_RBY1_INIT_GRIPPERS[0]))
+    if right_gripper is not None:
+        right_gripper.set_control(float(_RBY1_INIT_GRIPPERS[1]))
+
+
 class RBY1(Robot):
     """RBY1 Robot with Robotiq grippers."""
 
@@ -529,9 +560,15 @@ class RBY1(Robot):
                 # Add mocap body at world level, at ground level
                 worldbody = self._mojo.root_element.mjcf.worldbody
                 base_target = worldbody.add("body", name="base_target", mocap=True, 
-                                           pos=[0, 0, 0])  # At ground level
-                base_target.add("geom", type="box", size=[0.1, 0.1, 0.05], 
-                               contype=0, conaffinity=0, rgba=[0.8, 0.2, 0.2, 0.5])
+                                           pos=_RBY1_MOCAP_POS)  # At ground level
+                base_target.add(
+                    "geom",
+                    type=_RBY1_MOCAP_GEOM_TYPE,
+                    size=_RBY1_MOCAP_GEOM_SIZE,
+                    contype=_RBY1_MOCAP_GEOM_CONTYPE,
+                    conaffinity=_RBY1_MOCAP_GEOM_CONAFFINITY,
+                    rgba=_RBY1_MOCAP_GEOM_RGBA,
+                )
                 
                 # Add weld constraint to connect mocap to base
                 # This is needed for the mocap to actually control the robot base
@@ -541,8 +578,8 @@ class RBY1(Robot):
                     "weld", 
                     body1="base_target", 
                     body2="rby1/base",
-                    solimp=[0.99, 0.999, 0.001, 0.5, 2],
-                    solref=[0.001, 1],
+                    solimp=_RBY1_WELD_SOLIMP,
+                    solref=_RBY1_WELD_SOLREF,
                 )
         
         # Find base_target mocap body if not done yet
@@ -610,6 +647,7 @@ class RBY1(Robot):
     def reset(self, position: np.ndarray, orientation: np.ndarray):
         super().reset(position, orientation)
         _apply_head_default_posture(self._mojo)
+        _apply_gripper_default_posture(self)
         if _rby1_perturb_enabled():
             rng, rng_state = _make_rby1_perturb_rng()
             try:
@@ -672,7 +710,7 @@ class RBY1FineManipulation(Robot):
         )
 
         # Set desired scale before loading
-        self._model_scale = 1.3
+        self._model_scale = _RBY1_FINE_MODEL_SCALE
         super().__init__(action_mode, mojo)
         
         # Fix limb_actuators for RBY1 with namespace
@@ -691,9 +729,15 @@ class RBY1FineManipulation(Robot):
                 # Add mocap body at world level, at ground level
                 worldbody = self._mojo.root_element.mjcf.worldbody
                 base_target = worldbody.add("body", name="base_target", mocap=True, 
-                                           pos=[0, 0, 0])  # At ground level
-                base_target.add("geom", type="box", size=[0.1, 0.1, 0.05], 
-                               contype=0, conaffinity=0, rgba=[0.8, 0.2, 0.2, 0.5])
+                                           pos=_RBY1_MOCAP_POS)  # At ground level
+                base_target.add(
+                    "geom",
+                    type=_RBY1_MOCAP_GEOM_TYPE,
+                    size=_RBY1_MOCAP_GEOM_SIZE,
+                    contype=_RBY1_MOCAP_GEOM_CONTYPE,
+                    conaffinity=_RBY1_MOCAP_GEOM_CONAFFINITY,
+                    rgba=_RBY1_MOCAP_GEOM_RGBA,
+                )
                 
                 # Add weld constraint to connect mocap to base
                 # This is needed for the mocap to actually control the robot base
@@ -703,8 +747,8 @@ class RBY1FineManipulation(Robot):
                     "weld", 
                     body1="base_target", 
                     body2="rby1/base",
-                    solimp=[0.95, 0.99, 0.001], 
-                    solref=[0.02, 1]
+                    solimp=_RBY1_FINE_WELD_SOLIMP,
+                    solref=_RBY1_FINE_WELD_SOLREF,
                 )
 
     def _fix_limb_actuators(self):
@@ -817,6 +861,7 @@ class RBY1FineManipulation(Robot):
     def reset(self, position: np.ndarray, orientation: np.ndarray):
         super().reset(position, orientation)
         _apply_head_default_posture(self._mojo)
+        _apply_gripper_default_posture(self)
         if _rby1_perturb_enabled():
             rng, rng_state = _make_rby1_perturb_rng()
             try:

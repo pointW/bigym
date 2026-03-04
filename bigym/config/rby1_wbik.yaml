@@ -4,8 +4,8 @@ ee_ori_cost: 10000.0
 posture_cost_main: 100.0
 posture_cost_torso_bias: 50.0
 com_over_base_pos_cost: 100.0
-base_ground_position_cost: [0.0, 0.0, 100000.0]
-base_ground_orientation_cost: [100000.0, 100000.0, 0.0]
+base_ground_position_cost: [5000.0, 5000.0, 100000.0]
+base_ground_orientation_cost: [100000.0, 100000.0, 5000.0]
 torso_upright_ori_cost: 1000.0
 torso_upright_target_position: [0.0, 0.0, 1.0]
 torso_relative_target: [0.0, 0.0, 0.8]
@@ -13,7 +13,7 @@ torso_bias_reference: [0.0, 0.305, -0.698, 0.305, 0.0, 0.0]
 
 # Collision avoidance distances (meters)
 safety_distance: 0.01
-influence_distance: 0.05
+influence_distance: 0.02
 
 # Velocity limits
 velocity_limit_scale: 0.9
