@@ -702,8 +702,6 @@ class RBY1WholeBodyIK:
             "right_ee_col_2",
             "right_ee_col_3",
             "right_ee_col_4",
-            "right_finger_col_0",
-            "right_finger_col_1",
         }
 
         left_arm_0_group = {"left_arm_0_col_0", "left_arm_0_col_1", "left_arm_0_col_2"}
@@ -720,8 +718,6 @@ class RBY1WholeBodyIK:
             "left_ee_col_2",
             "left_ee_col_3",
             "left_ee_col_4",
-            "left_finger_col_0",
-            "left_finger_col_1",
         }
 
         if self.has_namespace:
