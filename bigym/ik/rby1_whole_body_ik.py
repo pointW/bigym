@@ -247,8 +247,19 @@ class RBY1WholeBodyIK:
         self.nominal_left_arm_angles = require_vec("nominal_left_arm_rad", 7)
         self.nominal_head_angles = require_vec("nominal_head_rad", 2)
 
-        self.safety_distance = float(require("safety_distance"))
-        self.influence_distance = float(require("influence_distance"))
+        # Collision avoidance distances can be configured separately for:
+        self.self_safety_distance = float(
+            cfg.get("self_safety_distance", legacy_safety if legacy_safety is not None else 0.01,)
+        )
+        self.self_influence_distance = float(
+            cfg.get("self_influence_distance", legacy_influence if legacy_influence is not None else 0.02,)
+        )
+        self.env_safety_distance = float(
+            cfg.get("env_safety_distance", self.self_safety_distance)
+        )
+        self.env_influence_distance = float(
+            cfg.get("env_influence_distance", self.self_influence_distance)
+        )
 
         self.velocity_limit_scale = float(require("velocity_limit_scale"))
         self.base_xy_velocity_limit = float(require("base_xy_velocity_limit"))
@@ -753,20 +764,32 @@ class RBY1WholeBodyIK:
 
         robot_collision_group = base_torso_group | left_arm_group | right_arm_group
         environment_geom_group = self._get_environment_geoms()
-        geom_pairs = [
+        self_geom_pairs = [
             (base_torso_group, left_arm_group),
             (base_torso_group, right_arm_group),
             (left_arm_group, right_arm_group),
         ]
+        env_geom_pairs = []
         if robot_collision_group and environment_geom_group:
-            geom_pairs.append((robot_collision_group, environment_geom_group))
+            env_geom_pairs.append((robot_collision_group, environment_geom_group))
 
-        collision_avoidance_limit = mink.CollisionAvoidanceLimit(
-            model=self.model,
-            geom_pairs=geom_pairs,
-            minimum_distance_from_collisions=self.safety_distance,
-            collision_detection_distance=self.influence_distance,
-        )
+        collision_limits = []
+        if self_geom_pairs:
+            self_collision_avoidance_limit = mink.CollisionAvoidanceLimit(
+                model=self.model,
+                geom_pairs=self_geom_pairs,
+                minimum_distance_from_collisions=self.self_safety_distance,
+                collision_detection_distance=self.self_influence_distance,
+            )
+            collision_limits.append(self_collision_avoidance_limit)
+        if env_geom_pairs:
+            env_collision_avoidance_limit = mink.CollisionAvoidanceLimit(
+                model=self.model,
+                geom_pairs=env_geom_pairs,
+                minimum_distance_from_collisions=self.env_safety_distance,
+                collision_detection_distance=self.env_influence_distance,
+            )
+            collision_limits.append(env_collision_avoidance_limit)
 
         resolved_joint_limits = {}
         for joint_name, limit in self.joint_velocity_limits.items():
@@ -786,7 +809,7 @@ class RBY1WholeBodyIK:
             lin_max=[lin_limit, lin_limit, 0.0],
         )
 
-        self._cached_limits = [collision_avoidance_limit, mink.ConfigurationLimit(self.model)]
+        self._cached_limits = [*collision_limits, mink.ConfigurationLimit(self.model)]
         if resolved_joint_limits:
             self._cached_limits.append(mink.VelocityLimit(self.model, resolved_joint_limits))
         self._cached_limits.append(base_velocity_limit)

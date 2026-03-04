@@ -18,8 +18,10 @@ nominal_left_arm_rad: [0.000001, -0.039207, -0.000001, -2.135956, -0.000004, 0.5
 nominal_head_rad: [0.0, 0.785398]
 
 # Collision avoidance distances (meters)
-safety_distance: 0.01
-influence_distance: 0.02
+self_safety_distance: 0.01
+self_influence_distance: 0.02
+env_safety_distance: 0.1
+env_influence_distance: 0.3
 
 # Velocity limits
 velocity_limit_scale: 0.9

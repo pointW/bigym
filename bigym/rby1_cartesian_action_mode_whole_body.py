@@ -320,8 +320,6 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
                 left_target_quat=interp_left_quat,
                 right_target_pos=interp_right_pos,
                 right_target_quat=interp_right_quat,
-                left_body_relative=False,  # Always use world frame
-                right_body_relative=False,  # Always use world frame
                 current_qpos=current_qpos,
             )
 
