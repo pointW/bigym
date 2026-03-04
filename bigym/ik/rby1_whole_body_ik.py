@@ -405,18 +405,13 @@ class RBY1WholeBodyIK:
 
         # Limits
         # 6. Collision avoidance limits using Mink's built-in functionality
-        # base_group = {"base_col_0", "base_col_1"}
-
-        # torso_0_group = {"torso_0_col_0", "torso_0_col_1"}
-        # torso_1_group = {"torso_1_col_0", "torso_1_col_1", "torso_1_col_2", "torso_1_col_3", "torso_1_col_4", "torso_1_col_5", "torso_1_col_6", "torso_1_col_7", "torso_1_col_8", "torso_1_col_9", "torso_1_col_10"}
-        # torso_2_group = {"torso_2_col_0", "torso_2_col_1", "torso_2_col_2", "torso_2_col_3", "torso_2_col_4", "torso_2_col_5", "torso_2_col_6", "torso_2_col_7", "torso_2_col_8", "torso_2_col_9", "torso_2_col_10"}
-        # torso_4_group = {"torso_4_col_0", "torso_4_col_1", "torso_4_col_2", "torso_4_col_3"}
-        base_group = {}
-        torso_0_group = {}
-        torso_1_group = {}
-        torso_2_group = {}
-        torso_4_group = {}
+        base_group = {"base_col_0", "base_col_1"}
+        torso_0_group = {"torso_0_col_0", "torso_0_col_1"}
+        torso_1_group = {"torso_1_col_0", "torso_1_col_1", "torso_1_col_2", "torso_1_col_3", "torso_1_col_4", "torso_1_col_5", "torso_1_col_6", "torso_1_col_7", "torso_1_col_8", "torso_1_col_9", "torso_1_col_10"}
+        torso_2_group = {"torso_2_col_0", "torso_2_col_1", "torso_2_col_2", "torso_2_col_3", "torso_2_col_4", "torso_2_col_5", "torso_2_col_6", "torso_2_col_7", "torso_2_col_8", "torso_2_col_9", "torso_2_col_10"}
+        torso_4_group = {"torso_4_col_0", "torso_4_col_1", "torso_4_col_2", "torso_4_col_3"}
         torso_5_group = {"torso_5_col_0", "torso_5_col_1", "torso_5_col_2", "torso_5_col_3", "torso_5_col_4"}
+        head_group = {"head_col_0"}
 
         right_arm_0_group = {"right_arm_0_col_0", "right_arm_0_col_1", "right_arm_0_col_2"}
         right_arm_1_group = {"right_arm_1_col_0"}
@@ -425,7 +420,8 @@ class RBY1WholeBodyIK:
         right_arm_4_group = {"right_arm_4_col_0", "right_arm_4_col_1", "right_arm_4_col_2", "right_arm_4_col_3", "right_arm_4_col_4"}
         right_arm_5_group = {"right_arm_5_col_0", "right_arm_5_col_1", "right_arm_5_col_2"}
         right_arm_6_group = {"right_arm_6_col_0"}
-        right_arm_7_group = {"right_arm_7_col_0"}
+        right_arm_7_group = {"right_arm_7_col_0", "right_wrist_cam_col_0", "right_wrist_cam_col_1", "right_wrist_cam_col_2"}
+        right_ee_group = {"right_ee_col_0", "right_ee_col_1", "right_ee_col_2", "right_ee_col_3", "right_ee_col_4"}
 
         left_arm_0_group = {"left_arm_0_col_0", "left_arm_0_col_1", "left_arm_0_col_2"}
         left_arm_1_group = {"left_arm_1_col_0"}
@@ -434,7 +430,8 @@ class RBY1WholeBodyIK:
         left_arm_4_group = {"left_arm_4_col_0", "left_arm_4_col_1", "left_arm_4_col_2", "left_arm_4_col_3", "left_arm_4_col_4"}
         left_arm_5_group = {"left_arm_5_col_0", "left_arm_5_col_1", "left_arm_5_col_2"}
         left_arm_6_group = {"left_arm_6_col_0"}
-        left_arm_7_group = {"left_arm_7_col_0"}
+        left_arm_7_group = {"left_arm_7_col_0", "left_wrist_cam_col_0", "left_wrist_cam_col_1", "left_wrist_cam_col_2"}
+        left_ee_group = {"left_ee_col_0", "left_ee_col_1", "left_ee_col_2", "left_ee_col_3", "left_ee_col_4"}
 
         if self.has_namespace:
             base_group = {"rby1/" + name for name in base_group}
@@ -451,6 +448,7 @@ class RBY1WholeBodyIK:
             right_arm_5_group = {"rby1/" + name for name in right_arm_5_group}
             right_arm_6_group = {"rby1/" + name for name in right_arm_6_group}
             right_arm_7_group = {"rby1/" + name for name in right_arm_7_group}
+            right_ee_group = {"rby1/" + name for name in right_ee_group}
             left_arm_0_group = {"rby1/" + name for name in left_arm_0_group}
             left_arm_1_group = {"rby1/" + name for name in left_arm_1_group}
             left_arm_2_group = {"rby1/" + name for name in left_arm_2_group}
@@ -459,23 +457,26 @@ class RBY1WholeBodyIK:
             left_arm_5_group = {"rby1/" + name for name in left_arm_5_group}
             left_arm_6_group = {"rby1/" + name for name in left_arm_6_group}
             left_arm_7_group = {"rby1/" + name for name in left_arm_7_group}
+            left_ee_group = {"rby1/" + name for name in left_ee_group}
+            head_group = {"rby1/" + name for name in head_group}
 
-        base_torso_group = base_group | torso_0_group | torso_1_group | torso_2_group | torso_4_group | torso_5_group
-        left_arm_group = left_arm_0_group | left_arm_1_group | left_arm_2_group | left_arm_3_group | left_arm_4_group | left_arm_5_group | left_arm_6_group | left_arm_7_group
-        right_arm_group = right_arm_0_group | right_arm_1_group | right_arm_2_group | right_arm_3_group | right_arm_4_group | right_arm_5_group | right_arm_6_group | right_arm_7_group
+        base_torso_group = base_group | torso_0_group | torso_1_group | torso_2_group | torso_4_group | torso_5_group | head_group
+        left_arm_group = left_arm_0_group | left_arm_1_group | left_arm_2_group | left_arm_3_group | left_arm_4_group | left_arm_5_group | left_arm_6_group | left_arm_7_group | left_ee_group
+        right_arm_group = right_arm_0_group | right_arm_1_group | right_arm_2_group | right_arm_3_group | right_arm_4_group | right_arm_5_group | right_arm_6_group | right_arm_7_group | right_ee_group
 
         # Environment collision group - all robot collision geoms
-        # robot_collision_group = base_torso_group | left_arm_group | right_arm_group
+        robot_collision_group = base_torso_group | left_arm_group | right_arm_group
 
         # Get environment collision geoms (non-robot geoms)
-        # environment_geom_group = self._get_environment_geoms()
+        environment_geom_group = self._get_environment_geoms()
 
         geom_pairs = [
             (base_torso_group, left_arm_group),
             (base_torso_group, right_arm_group),
             (left_arm_group, right_arm_group),
-            # (robot_collision_group, environment_geom_group),
         ]
+        if robot_collision_group and environment_geom_group:
+            geom_pairs.append((robot_collision_group, environment_geom_group))
 
         collision_avoidance_limit = mink.CollisionAvoidanceLimit(
             model=self.model,
@@ -548,7 +549,7 @@ class RBY1WholeBodyIK:
         # self.data.qpos[:] = current_qpos
         # mujoco.mj_forward(self.model, self.data)
         
-        return solution_qpos, True, info
+        return solution_qpos, success, info
     
     def _get_site_position(self, site_name: str, qpos: np.ndarray) -> np.ndarray:
         """Get site position for given joint configuration.
