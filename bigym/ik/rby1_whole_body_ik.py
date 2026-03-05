@@ -766,28 +766,29 @@ class RBY1WholeBodyIK:
             )
             collision_limits.append(env_collision_avoidance_limit)
 
-        resolved_joint_limits = {}
-        for joint_name, limit in self.joint_velocity_limits.items():
-            resolved_name = self._resolve_joint_name_for_model(joint_name)
-            joint_id = mujoco.mj_name2id(
-                self.model, mujoco.mjtObj.mjOBJ_JOINT, resolved_name
-            )
-            if joint_id >= 0:
-                resolved_joint_limits[resolved_name] = float(limit) * self.velocity_limit_scale
+        self._cached_limits = [*collision_limits]
 
-        lin_limit = self.base_xy_velocity_limit * self.velocity_limit_scale
-        ang_limit = self.base_rz_velocity_limit * self.velocity_limit_scale
-        base_velocity_limit = FreeJointVelocityLimit(
-            self.model,
-            self.base_joint_id,
-            ang_max=[0.0, 0.0, ang_limit],
-            lin_max=[lin_limit, lin_limit, 0.0],
-        )
+        # resolved_joint_limits = {}
+        # for joint_name, limit in self.joint_velocity_limits.items():
+        #     resolved_name = self._resolve_joint_name_for_model(joint_name)
+        #     joint_id = mujoco.mj_name2id(
+        #         self.model, mujoco.mjtObj.mjOBJ_JOINT, resolved_name
+        #     )
+        #     if joint_id >= 0:
+        #         resolved_joint_limits[resolved_name] = float(limit) * self.velocity_limit_scale
+        # if resolved_joint_limits:
+        #     self._cached_limits.append(mink.VelocityLimit(self.model, resolved_joint_limits))
+        #     self._cached_limits.append(mink.ConfigurationLimit(self.model))
 
-        self._cached_limits = [*collision_limits, mink.ConfigurationLimit(self.model)]
-        if resolved_joint_limits:
-            self._cached_limits.append(mink.VelocityLimit(self.model, resolved_joint_limits))
-        self._cached_limits.append(base_velocity_limit)
+        # lin_limit = self.base_xy_velocity_limit * self.velocity_limit_scale
+        # ang_limit = self.base_rz_velocity_limit * self.velocity_limit_scale
+        # base_velocity_limit = FreeJointVelocityLimit(
+        #     self.model,
+        #     self.base_joint_id,
+        #     ang_max=[0.0, 0.0, ang_limit],
+        #     lin_max=[lin_limit, lin_limit, 0.0],
+        # )
+        # self._cached_limits.append(base_velocity_limit)
 
     def _build_tasks_cache(self) -> None:
         """Build once and cache static tasks."""
