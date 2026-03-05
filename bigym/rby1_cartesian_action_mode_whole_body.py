@@ -193,6 +193,7 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
 
         # Initialize parent with no floating DOFs (we handle base control via whole-body IK)
         super().__init__(floating_base=False, floating_dofs=None)
+        self.uses_internal_substeps = True
 
         action_mode_cfg = _load_whole_body_action_mode_config(config_path)
         base_cfg = action_mode_cfg.get("base", {})
@@ -328,6 +329,7 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         self._prev_base_target_world = None
         self._last_ik_solution = None  # Store last IK solution to avoid recomputation
         self._last_ik_info = None  # Store IK solver info for debugging
+        self._base_z_ref = None
         
     def bind_robot(self, robot, mojo):
         """Bind action mode to robot."""
@@ -343,6 +345,7 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         self._wheel_dof_indices = None
         self._base_weld_eq_id = None
         self._prev_base_target_world = None
+        self._base_z_ref = None
         
     def action_space(self, action_scale: float, seed: Optional[int] = None) -> spaces.Box:
         """Create action space for Cartesian control.
@@ -602,6 +605,7 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
                     wheel_vel = self._body_twist_to_wheel_joint_vel(twist_body)
                     self._apply_base_and_wheel_velocity(data, twist_world, wheel_vel)
                     self._mojo.step()
+                    self._project_base_pose_to_se2(data)
             else:
                 if self.block_until_reached:
                     self._step_until_reached()
@@ -613,9 +617,15 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         # Control grippers 
         for side, action in zip(self._robot.grippers, gripper_action):
             self._robot.grippers[side].set_control(action)
-        # Step 10 times to allow grippers to fully actuate
+        # Step 10 times to allow grippers to fully actuate.
+        # In wheel-velocity mode, keep base state projected to SE(2) during these extra steps
+        # too; otherwise z/roll/pitch drift can reappear after the main rollout loop.
         for _ in range(10):
+            if self.base_control_mode == "wheel_velocity":
+                self._zero_base_and_wheel_velocity(data)
             self._mojo.step()
+            if self.base_control_mode == "wheel_velocity":
+                self._project_base_pose_to_se2(data)
         
     def reset(self, reset_state: np.ndarray):
         """Reset robot state.
@@ -658,6 +668,8 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
             self._set_base_weld_active(
                 model, data, active=(self.base_control_mode == "mocap_weld")
             )
+            if self._base_qpos_adr is not None and self._base_qpos_adr >= 0:
+                self._base_z_ref = float(data.qpos[int(self._base_qpos_adr) + 2])
         
     def _initialize_ik_solver(self):
         """Initialize the RBY1 whole-body IK solver."""
@@ -870,6 +882,48 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
 
         if self._wheel_dof_indices is not None and len(self._wheel_dof_indices) == 4:
             data.qvel[self._wheel_dof_indices] = wheel_vel
+
+    def _zero_base_and_wheel_velocity(self, data: mujoco.MjData) -> None:
+        """Clear base and wheel velocity state for post-rollout stabilization steps."""
+        if self._base_dof_adr is not None and self._base_dof_adr >= 0:
+            base_dadr = int(self._base_dof_adr)
+            data.qvel[base_dadr : base_dadr + 6] = 0.0
+        if self._wheel_dof_indices is not None and len(self._wheel_dof_indices) == 4:
+            data.qvel[self._wheel_dof_indices] = 0.0
+
+    def _project_base_pose_to_se2(self, data: mujoco.MjData) -> None:
+        """
+        Keep base pose on SE(2): lock z and roll/pitch while preserving current yaw.
+        This suppresses vertical drift and tilt accumulation in wheel_velocity mode.
+        """
+        if self._base_qpos_adr is None or self._base_qpos_adr < 0:
+            return
+        if self._base_dof_adr is None or self._base_dof_adr < 0:
+            return
+
+        base_qadr = int(self._base_qpos_adr)
+        base_dadr = int(self._base_dof_adr)
+
+        if self._base_z_ref is None:
+            self._base_z_ref = float(data.qpos[base_qadr + 2])
+
+        quat = np.asarray(data.qpos[base_qadr + 3 : base_qadr + 7], dtype=float)
+        yaw = self._yaw_from_quat_wxyz(quat)
+        yaw_quat = np.array(
+            [math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0)],
+            dtype=float,
+        )
+
+        data.qpos[base_qadr + 2] = float(self._base_z_ref)
+        data.qpos[base_qadr + 3 : base_qadr + 7] = yaw_quat
+
+        # Keep velocity state consistent with SE(2)-only pose.
+        data.qvel[base_dadr + 2] = 0.0
+        data.qvel[base_dadr + 3] = 0.0
+        data.qvel[base_dadr + 4] = 0.0
+
+        model = self._mojo.physics.model._model
+        mujoco.mj_forward(model, data)
     
     def get_last_ik_solution(self) -> tuple[np.ndarray, dict]:
         """Get the last IK solution and info for debugging."""

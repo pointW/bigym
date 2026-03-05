@@ -797,7 +797,12 @@ class BiGymEnv(gym.Env):
                 f"Overhead: {action - clipped_action}"
             )
         with self._env_health.track():
-            for i in range(self._sub_steps_count):
+            sub_steps_count = (
+                1
+                if bool(getattr(self.action_mode, "uses_internal_substeps", False))
+                else self._sub_steps_count
+            )
+            for i in range(sub_steps_count):
                 if i == 0:
                     self.action_mode.step(action)
                 else:

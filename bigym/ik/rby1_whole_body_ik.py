@@ -268,10 +268,10 @@ class RBY1WholeBodyIK:
     
     def _setup_joint_indices(self):
         """Setup joint indices for different robot parts."""
-        # Base joint (now controlled by IK)
-        self.base_joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "world_j")
-        self.base_qpos_indices = [0, 1, 2]  # X, Y, Z positions
-        self.base_quat_indices = [3, 4, 5, 6]  # Quaternion (w, x, y, z)
+        self.base_joint_id = 0
+        qpos_adr = int(self.model.jnt_qposadr[self.base_joint_id])
+        self.base_qpos_indices = [qpos_adr + 0, qpos_adr + 1, qpos_adr + 2]
+        self.base_quat_indices = [qpos_adr + 3, qpos_adr + 4, qpos_adr + 5, qpos_adr + 6]
         
         # Wheel joints (not modified by IK)
         self.wheel_joint_names = [
