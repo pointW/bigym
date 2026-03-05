@@ -248,18 +248,10 @@ class RBY1WholeBodyIK:
         self.nominal_head_angles = require_vec("nominal_head_rad", 2)
 
         # Collision avoidance distances can be configured separately for:
-        self.self_safety_distance = float(
-            cfg.get("self_safety_distance", legacy_safety if legacy_safety is not None else 0.01,)
-        )
-        self.self_influence_distance = float(
-            cfg.get("self_influence_distance", legacy_influence if legacy_influence is not None else 0.02,)
-        )
-        self.env_safety_distance = float(
-            cfg.get("env_safety_distance", self.self_safety_distance)
-        )
-        self.env_influence_distance = float(
-            cfg.get("env_influence_distance", self.self_influence_distance)
-        )
+        self.self_safety_distance = float(require("self_safety_distance"))
+        self.self_influence_distance = float(require("self_influence_distance"))
+        self.env_safety_distance = float(require("env_safety_distance"))
+        self.env_influence_distance = float(require("env_influence_distance"))
 
         self.velocity_limit_scale = float(require("velocity_limit_scale"))
         self.base_xy_velocity_limit = float(require("base_xy_velocity_limit"))
