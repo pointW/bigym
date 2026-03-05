@@ -94,7 +94,7 @@ class FlipCup(_ManipulationEnv):
     _CUP_TABLE_CONTACT_EPS = 1.0e-4
     _PCD_SURFACE_KEEP_EPS = 3.0e-3
 
-    _TOLERANCE = np.deg2rad(5)
+    _TOLERANCE = np.deg2rad(1)
 
     def _initialize_env(self):
         super()._initialize_env()
