@@ -30,3 +30,22 @@ mocap_base_target:
 
 fine_manipulation:
   model_scale: 1.3
+
+whole_body_action_mode:
+  position_limits: [-2.0, 2.0]
+  block_until_reached: false
+  direct_mode: false
+  control_frequency: 50
+  interpolation_frequency: 50
+  low_level_frequency: 1000
+  base:
+    control_mode: wheel_velocity
+    error_gain: [3.0, 3.0, 3.0]
+    velocity_gain: [0.1, 0.1, 0.1]
+    max_linear_speed: 0.6
+    max_yaw_speed: 1.2
+    wheel_radius: 0.076
+    wheel_half_length: 0.245
+    wheel_half_width: 0.245
+    wheel_speed_limit: 20.0
+    wheel_velocity_signs: [1.0, 1.0, 1.0, 1.0]

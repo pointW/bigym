@@ -5,11 +5,14 @@ along with joint positions to reach end-effector targets.
 """
 from __future__ import annotations
 
+import math
+from pathlib import Path
 from typing import Optional
 import numpy as np
 from gymnasium import spaces
 from pyquaternion import Quaternion
 import mujoco
+from yaml import safe_load
 
 from bigym.action_modes import ActionMode, TargetStateNotReachedWarning
 from bigym.const import HandSide, TOLERANCE_ANGULAR
@@ -19,6 +22,41 @@ from bigym.utils.physics_utils import (
 )
 from vr.ik.h1_upper_body_ik import Pose
 import warnings
+
+DEFAULT_RBY1_WBC_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "rby1_wbc.yaml"
+
+
+def _load_whole_body_action_mode_config(config_path: Optional[str | Path]) -> dict:
+    """Load whole-body Cartesian action mode defaults from rby1_wbc.yaml."""
+    path = Path(config_path) if config_path is not None else DEFAULT_RBY1_WBC_CONFIG_PATH
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            cfg = safe_load(f)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to load RBY1 WBC config from '{path}': {exc}") from exc
+
+    if not isinstance(cfg, dict):
+        raise ValueError(f"RBY1 WBC config at '{path}' must be a mapping.")
+
+    action_mode_cfg = cfg.get("whole_body_action_mode", {})
+    if action_mode_cfg is None:
+        return {}
+    if not isinstance(action_mode_cfg, dict):
+        raise ValueError(
+            "RBY1 WBC config key 'whole_body_action_mode' must be a mapping."
+        )
+    return action_mode_cfg
+
+
+def _parse_range(value, name: str) -> tuple[float, float]:
+    arr = np.asarray(value, dtype=float).reshape(-1)
+    if arr.size != 2:
+        raise ValueError(f"{name} must have 2 values [min, max], got {arr.size}.")
+    low = float(arr[0])
+    high = float(arr[1])
+    if low > high:
+        raise ValueError(f"{name} must satisfy min <= max (got {value}).")
+    return low, high
 
 
 def rotation_matrix_to_6d(rotation_matrix: np.ndarray) -> np.ndarray:
@@ -95,7 +133,7 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
     
     This action mode:
     1. Solves whole-body IK for desired end-effector poses
-    2. Moves base_target mocap body to the optimized base position
+    2. Applies base motion either by `mocap+weld` or by wheel/base velocity commands
     3. Applies joint positions from IK solution
     4. Controls grippers
     
@@ -112,35 +150,182 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
     
     def __init__(
         self,
-        position_limits: tuple[float, float] = (-2.0, 2.0),
-        block_until_reached: bool = False,
-        direct_mode: bool = False,
-        control_frequency: int = 50,
-        interpolation_frequency: int = 50,
-        low_level_frequency: int = 1000,
+        position_limits: Optional[tuple[float, float]] = None,
+        block_until_reached: Optional[bool] = None,
+        direct_mode: Optional[bool] = None,
+        control_frequency: Optional[int] = None,
+        interpolation_frequency: Optional[int] = None,
+        low_level_frequency: Optional[int] = None,
+        base_control_mode: Optional[str] = None,
+        base_error_gain: Optional[tuple[float, float, float]] = None,
+        base_velocity_gain: Optional[tuple[float, float, float]] = None,
+        max_base_linear_speed: Optional[float] = None,
+        max_base_yaw_speed: Optional[float] = None,
+        wheel_radius: Optional[float] = None,
+        wheel_half_length: Optional[float] = None,
+        wheel_half_width: Optional[float] = None,
+        wheel_speed_limit: Optional[float] = None,
+        wheel_velocity_signs: Optional[tuple[float, float, float, float]] = None,
+        config_path: Optional[str | Path] = None,
     ):
         """Initialize RBY1 Cartesian action mode with whole-body IK.
         
         Args:
-            position_limits: Min/max limits for end-effector positions
-            block_until_reached: Whether to block until position is reached
-            direct_mode: If True, directly set joint qpos (bypassing controllers)
-            control_frequency: Control frequency in Hz (default: 50)
-            interpolation_frequency: Frequency for IK waypoints in Hz (default: 100)
-            low_level_frequency: Physics simulation frequency in Hz (default: 500)
+            position_limits: End-effector position limits. If None, use YAML default.
+            block_until_reached: If None, use YAML default.
+            direct_mode: If None, use YAML default.
+            control_frequency: If None, use YAML default.
+            interpolation_frequency: If None, use YAML default.
+            low_level_frequency: If None, use YAML default.
+            base_control_mode: `mocap_weld` or `wheel_velocity`. If None, use YAML default.
+            base_error_gain: [x, y, yaw] P gains. If None, use YAML default.
+            base_velocity_gain: [vx, vy, wz] feed-forward gains. If None, use YAML default.
+            max_base_linear_speed: If None, use YAML default.
+            max_base_yaw_speed: If None, use YAML default.
+            wheel_radius: If None, use YAML default.
+            wheel_half_length: If None, use YAML default.
+            wheel_half_width: If None, use YAML default.
+            wheel_speed_limit: If None, use YAML default.
+            wheel_velocity_signs: If None, use YAML default.
+            config_path: Optional path to RBY1 WBC YAML.
+                Defaults to `<bigym>/bigym/config/rby1_wbc.yaml`.
         """
-        
+
         # Initialize parent with no floating DOFs (we handle base control via whole-body IK)
         super().__init__(floating_base=False, floating_dofs=None)
-        
-        self.position_limits = position_limits
-        self.block_until_reached = block_until_reached
-        self.direct_mode = direct_mode  # Direct qpos control mode
-        self.control_frequency = control_frequency
-        self.interpolation_frequency = interpolation_frequency  # Frequency for IK waypoints
-        self.low_level_frequency = low_level_frequency  # Physics simulation frequency
+
+        action_mode_cfg = _load_whole_body_action_mode_config(config_path)
+        base_cfg = action_mode_cfg.get("base", {})
+        if base_cfg is None:
+            base_cfg = {}
+        if not isinstance(base_cfg, dict):
+            raise ValueError(
+                "RBY1 WBC config key 'whole_body_action_mode.base' must be a mapping."
+            )
+
+        def pick_general(explicit_value, key: str, default):
+            if explicit_value is not None:
+                return explicit_value
+            return action_mode_cfg.get(key, default)
+
+        legacy_base_keys = {
+            "control_mode": "base_control_mode",
+            "error_gain": "base_error_gain",
+            "velocity_gain": "base_velocity_gain",
+            "max_linear_speed": "max_base_linear_speed",
+            "max_yaw_speed": "max_base_yaw_speed",
+            "wheel_radius": "wheel_radius",
+            "wheel_half_length": "wheel_half_length",
+            "wheel_half_width": "wheel_half_width",
+            "wheel_speed_limit": "wheel_speed_limit",
+            "wheel_velocity_signs": "wheel_velocity_signs",
+        }
+
+        def pick_base(explicit_value, base_key: str, default):
+            if explicit_value is not None:
+                return explicit_value
+            if base_key in base_cfg:
+                return base_cfg[base_key]
+            legacy_key = legacy_base_keys.get(base_key)
+            if legacy_key and legacy_key in action_mode_cfg:
+                return action_mode_cfg[legacy_key]
+            return default
+
+        resolved_position_limits = (
+            _parse_range(position_limits, "position_limits")
+            if position_limits is not None
+            else _parse_range(
+                pick_general(None, "position_limits", (-2.0, 2.0)),
+                "whole_body_action_mode.position_limits",
+            )
+        )
+        resolved_block_until_reached = bool(
+            pick_general(block_until_reached, "block_until_reached", False)
+        )
+        resolved_direct_mode = bool(pick_general(direct_mode, "direct_mode", False))
+        resolved_control_frequency = int(
+            pick_general(control_frequency, "control_frequency", 50)
+        )
+        resolved_interpolation_frequency = int(
+            pick_general(interpolation_frequency, "interpolation_frequency", 50)
+        )
+        resolved_low_level_frequency = int(
+            pick_general(low_level_frequency, "low_level_frequency", 1000)
+        )
+        resolved_base_control_mode = str(
+            pick_base(base_control_mode, "control_mode", "wheel_velocity")
+        )
+
+        if resolved_control_frequency <= 0:
+            raise ValueError("control_frequency must be > 0.")
+        if resolved_interpolation_frequency <= 0:
+            raise ValueError("interpolation_frequency must be > 0.")
+        if resolved_low_level_frequency <= 0:
+            raise ValueError("low_level_frequency must be > 0.")
+
+        if resolved_base_control_mode not in {"mocap_weld", "wheel_velocity"}:
+            raise ValueError(
+                f"Invalid base_control_mode='{resolved_base_control_mode}'. "
+                "Expected one of {'mocap_weld', 'wheel_velocity'}."
+            )
+
+        self.base_control_mode = resolved_base_control_mode
+        self.position_limits = resolved_position_limits
+        self.block_until_reached = resolved_block_until_reached
+        self.direct_mode = resolved_direct_mode  # Direct qpos control mode
+        self.control_frequency = resolved_control_frequency
+        self.interpolation_frequency = (
+            resolved_interpolation_frequency  # Frequency for IK waypoints
+        )
+        self.low_level_frequency = resolved_low_level_frequency  # Physics simulation frequency
+
+        self.base_error_gain = np.asarray(
+            pick_base(base_error_gain, "error_gain", (3.0, 3.0, 3.0)),
+            dtype=float,
+        ).reshape(-1)
+        if self.base_error_gain.size != 3:
+            raise ValueError("base_error_gain must have 3 elements [x, y, yaw].")
+        self.base_velocity_gain = np.asarray(
+            pick_base(base_velocity_gain, "velocity_gain", (0.1, 0.1, 0.1)),
+            dtype=float,
+        ).reshape(-1)
+        if self.base_velocity_gain.size != 3:
+            raise ValueError("base_velocity_gain must have 3 elements [vx, vy, wz].")
+
+        self.max_base_linear_speed = float(
+            pick_base(max_base_linear_speed, "max_linear_speed", 0.6)
+        )
+        self.max_base_yaw_speed = float(
+            pick_base(max_base_yaw_speed, "max_yaw_speed", 1.2)
+        )
+        self.wheel_radius = float(pick_base(wheel_radius, "wheel_radius", 0.076))
+        self.wheel_half_length = float(
+            pick_base(wheel_half_length, "wheel_half_length", 0.245)
+        )
+        self.wheel_half_width = float(
+            pick_base(wheel_half_width, "wheel_half_width", 0.245)
+        )
+        self.wheel_speed_limit = float(
+            pick_base(wheel_speed_limit, "wheel_speed_limit", 20.0)
+        )
+        self.wheel_velocity_signs = np.asarray(
+            pick_base(wheel_velocity_signs, "wheel_velocity_signs", (1.0, 1.0, 1.0, 1.0)),
+            dtype=float,
+        ).reshape(-1)
+        if self.wheel_velocity_signs.size != 4:
+            raise ValueError("wheel_velocity_signs must have 4 elements (fr, fl, rr, rl).")
+        if self.wheel_radius <= 0.0:
+            raise ValueError("wheel_radius must be > 0.")
+
         self._ik_solver = None
         self._base_target_body_id = None
+        self._base_free_joint_id = None
+        self._base_qpos_adr = None
+        self._base_dof_adr = None
+        self._wheel_qpos_indices = None
+        self._wheel_dof_indices = None
+        self._base_weld_eq_id = None
+        self._prev_base_target_world = None
         self._last_ik_solution = None  # Store last IK solution to avoid recomputation
         self._last_ik_info = None  # Store IK solver info for debugging
         
@@ -149,8 +334,15 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         super().bind_robot(robot, mojo)
         # IK solver will be initialized when first needed
         self._ik_solver = None
-        # Base target body ID will be set later when needed
+        # Base control handles are resolved lazily on first step/reset
         self._base_target_body_id = None
+        self._base_free_joint_id = None
+        self._base_qpos_adr = None
+        self._base_dof_adr = None
+        self._wheel_qpos_indices = None
+        self._wheel_dof_indices = None
+        self._base_weld_eq_id = None
+        self._prev_base_target_world = None
         
     def action_space(self, action_scale: float, seed: Optional[int] = None) -> spaces.Box:
         """Create action space for Cartesian control.
@@ -210,17 +402,6 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         # Initialize IK solver if not done yet
         if self._ik_solver is None:
             self._initialize_ik_solver()
-        
-        # Find base_target mocap body if not done yet
-        if self._base_target_body_id is None:
-            model = self._mojo.physics.model._model
-            self._base_target_body_id = mujoco.mj_name2id(
-                model, mujoco.mjtObj.mjOBJ_BODY, "base_target"
-            )
-            if self._base_target_body_id < 0:
-                # Mocap body doesn't exist, we need to handle this
-                print("WARNING: base_target mocap body not found in model")
-                self._base_target_body_id = -1
             
         # Parse action components
         idx = 0
@@ -284,6 +465,8 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         # Get model and data references
         model = self._mojo.physics.model._model
         data = self._mojo.physics.data._data
+        self._ensure_base_control_handles(model)
+        self._set_base_weld_active(model, data, active=(self.base_control_mode == "mocap_weld"))
         
         # Interpolate targets and solve IK for each waypoint
         for waypoint in range(num_waypoints):
@@ -335,17 +518,15 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
             self._last_ik_solution = ik_solution
             self._last_ik_info = info
             
-            # Extract base position from IK solution for mocap target
-            base_x = ik_solution[0]
-            base_y = ik_solution[1]
-            # Extract rotation from quaternion (only Z rotation for wheeled base)
+            # Extract base SE(2) target from IK result.
+            base_x = float(ik_solution[0])
+            base_y = float(ik_solution[1])
             quat = ik_solution[3:7]  # [w, x, y, z]
-            # Convert quaternion to euler angles, extract Z rotation (yaw)
-            base_rz = np.arctan2(2*(quat[0]*quat[3] + quat[1]*quat[2]), 
-                                1 - 2*(quat[2]**2 + quat[3]**2))
-            
-            # Prepare target mocap quaternion for Z rotation
-            target_mocap_quat = np.array([np.cos(base_rz / 2), 0, 0, np.sin(base_rz / 2)])
+            base_rz = self._yaw_from_quat_wxyz(quat)
+            target_mocap_quat = np.array(
+                [np.cos(base_rz / 2.0), 0.0, 0.0, np.sin(base_rz / 2.0)],
+                dtype=float,
+            )
             
             # Extract joint positions from IK solution
             # Note: qpos structure for RBY1 is:
@@ -357,27 +538,28 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
             # Target joint positions
             joint_positions = np.concatenate([torso_joints, right_arm_joints, left_arm_joints])
             
-            # Apply IK solution and step physics
-            mocap_id = model.body_mocapid[self._base_target_body_id]
-            if mocap_id >= 0:
-                # Set mocap position
-                data.mocap_pos[mocap_id][0] = base_x
-                data.mocap_pos[mocap_id][1] = base_y
-                data.mocap_pos[mocap_id][2] = 0.0  # Keep Z at ground level
-                data.mocap_quat[mocap_id] = target_mocap_quat
-            
+            # Apply IK base target through selected base-control backend.
+            if self.base_control_mode == "mocap_weld":
+                mocap_id = -1
+                if self._base_target_body_id is not None and self._base_target_body_id >= 0:
+                    mocap_id = int(model.body_mocapid[self._base_target_body_id])
+                if mocap_id >= 0:
+                    data.mocap_pos[mocap_id][0] = base_x
+                    data.mocap_pos[mocap_id][1] = base_y
+                    data.mocap_pos[mocap_id][2] = 0.0  # Keep Z at ground level.
+                    data.mocap_quat[mocap_id] = target_mocap_quat
+
             if self.direct_mode:
                 # ===== DIRECT MODE: Set qpos directly =====
-                # Set base position
-                data.qpos[0] = base_x
-                data.qpos[1] = base_y
-                # data.qpos[2] is Z, keep as is (should be 0)
-                
-                # Set base quaternion
-                data.qpos[3:7] = ik_solution[3:7]
-                
+                if self.base_control_mode == "mocap_weld":
+                    # In weld mode, direct-set base pose directly.
+                    base_qadr = int(self._base_qpos_adr) if self._base_qpos_adr is not None else 0
+                    data.qpos[base_qadr + 0] = base_x
+                    data.qpos[base_qadr + 1] = base_y
+                    data.qpos[base_qadr + 3 : base_qadr + 7] = ik_solution[3:7]
                 # Set wheel joints
-                data.qpos[7:11] = ik_solution[7:11]
+                if self._wheel_qpos_indices is not None and len(self._wheel_qpos_indices) == 4:
+                    data.qpos[self._wheel_qpos_indices] = ik_solution[7:11]
                 
                 # Set torso joints: qpos[11:17]
                 data.qpos[11:17] = torso_joints
@@ -400,12 +582,33 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
                     actuator_bound = self._mojo.physics.bind(actuator)
                     actuator_bound.ctrl = joint_positions[i]
             
-            if self.block_until_reached:
-                self._step_until_reached()
-            else:
-                # Step the simulation for this waypoint
+            if self.base_control_mode == "wheel_velocity":
+                if self.block_until_reached:
+                    warnings.warn(
+                        "block_until_reached is not supported in wheel_velocity mode; "
+                        "using fixed substep rollout instead.",
+                        UserWarning,
+                    )
+                dt = 1.0 / float(self.low_level_frequency)
                 for _ in range(steps_per_waypoint):
+                    twist_world, measured_yaw = self._compute_base_twist_world(
+                        target_x=base_x,
+                        target_y=base_y,
+                        target_yaw=base_rz,
+                        dt=dt,
+                        data=data,
+                    )
+                    twist_body = self._world_to_body_twist(twist_world, measured_yaw)
+                    wheel_vel = self._body_twist_to_wheel_joint_vel(twist_body)
+                    self._apply_base_and_wheel_velocity(data, twist_world, wheel_vel)
                     self._mojo.step()
+            else:
+                if self.block_until_reached:
+                    self._step_until_reached()
+                else:
+                    # Step the simulation for this waypoint.
+                    for _ in range(steps_per_waypoint):
+                        self._mojo.step()
 
         # Control grippers 
         for side, action in zip(self._robot.grippers, gripper_action):
@@ -444,8 +647,17 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         
         # Clear IK solver to force reinitialization
         # self._ik_solver = None
+        self._prev_base_target_world = None
         self._last_ik_solution = None
         self._last_ik_info = None
+
+        if self._mojo is not None and getattr(self._mojo, "physics", None):
+            model = self._mojo.physics.model._model
+            data = self._mojo.physics.data._data
+            self._ensure_base_control_handles(model)
+            self._set_base_weld_active(
+                model, data, active=(self.base_control_mode == "mocap_weld")
+            )
         
     def _initialize_ik_solver(self):
         """Initialize the RBY1 whole-body IK solver."""
@@ -455,6 +667,209 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         
         # Create the RBY1 whole-body IK solver
         self._ik_solver = RBY1WholeBodyIK(model, data)
+
+    @staticmethod
+    def _yaw_from_quat_wxyz(quat: np.ndarray) -> float:
+        """Extract yaw (Z rotation) from quaternion in wxyz order."""
+        qw, qx, qy, qz = np.asarray(quat, dtype=float).reshape(4)
+        return float(
+            math.atan2(
+                2.0 * (qw * qz + qx * qy),
+                1.0 - 2.0 * (qy * qy + qz * qz),
+            )
+        )
+
+    @staticmethod
+    def _angle_difference(target: float, current: float) -> float:
+        """Smallest signed angle from current to target."""
+        return float(math.atan2(math.sin(target - current), math.cos(target - current)))
+
+    def _find_joint_id(self, model: mujoco.MjModel, candidates: list[str]) -> int:
+        for name in candidates:
+            joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+            if joint_id >= 0:
+                return int(joint_id)
+        return -1
+
+    def _find_body_id(self, model: mujoco.MjModel, candidates: list[str]) -> int:
+        for name in candidates:
+            body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+            if body_id >= 0:
+                return int(body_id)
+        return -1
+
+    def _ensure_base_control_handles(self, model: mujoco.MjModel) -> None:
+        """Resolve model handles needed by mocap/wheel base control paths."""
+        if self._base_target_body_id is None:
+            self._base_target_body_id = self._find_body_id(model, ["base_target"])
+            if self._base_target_body_id < 0 and self.base_control_mode == "mocap_weld":
+                print("WARNING: base_target mocap body not found in model")
+
+        if self._base_free_joint_id is None:
+            self._base_free_joint_id = -1
+            self._base_qpos_adr = -1
+            self._base_dof_adr = -1
+            for joint_id in range(model.njnt):
+                if int(model.jnt_type[joint_id]) == int(mujoco.mjtJoint.mjJNT_FREE):
+                    self._base_free_joint_id = int(joint_id)
+                    self._base_qpos_adr = int(model.jnt_qposadr[joint_id])
+                    self._base_dof_adr = int(model.jnt_dofadr[joint_id])
+                    break
+            if self._base_free_joint_id < 0:
+                print("WARNING: could not find free base joint for wheel velocity mode")
+
+        if self._wheel_qpos_indices is None or self._wheel_dof_indices is None:
+            wheel_qpos_indices = []
+            wheel_dof_indices = []
+            for short_name in ("wheel_fr", "wheel_fl", "wheel_rr", "wheel_rl"):
+                joint_id = self._find_joint_id(
+                    model, [f"rby1/{short_name}", short_name]
+                )
+                if joint_id < 0:
+                    continue
+                wheel_qpos_indices.append(int(model.jnt_qposadr[joint_id]))
+                wheel_dof_indices.append(int(model.jnt_dofadr[joint_id]))
+            self._wheel_qpos_indices = np.asarray(wheel_qpos_indices, dtype=int)
+            self._wheel_dof_indices = np.asarray(wheel_dof_indices, dtype=int)
+            if self.base_control_mode == "wheel_velocity" and len(self._wheel_dof_indices) != 4:
+                print(
+                    "WARNING: expected 4 wheel joints for wheel_velocity mode, got "
+                    f"{len(self._wheel_dof_indices)}"
+                )
+
+        if self._base_weld_eq_id is None:
+            self._base_weld_eq_id = -1
+            for eq_id in range(model.neq):
+                if int(model.eq_type[eq_id]) != int(mujoco.mjtEq.mjEQ_WELD):
+                    continue
+                body_1 = int(model.eq_obj1id[eq_id])
+                body_2 = int(model.eq_obj2id[eq_id])
+                body_1_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_1) or ""
+                body_2_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_2) or ""
+                names = (body_1_name.lower(), body_2_name.lower())
+                if "base_target" in names[0] or "base_target" in names[1]:
+                    self._base_weld_eq_id = int(eq_id)
+                    break
+
+    def _set_base_weld_active(
+        self,
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        active: bool,
+    ) -> None:
+        """Enable/disable base_target weld constraint if present."""
+        if self._base_weld_eq_id is None:
+            self._ensure_base_control_handles(model)
+        if self._base_weld_eq_id is None or self._base_weld_eq_id < 0:
+            return
+        desired = 1 if active else 0
+        eq_id = int(self._base_weld_eq_id)
+        if int(data.eq_active[eq_id]) == desired:
+            return
+        data.eq_active[eq_id] = desired
+        mujoco.mj_forward(model, data)
+
+    def _compute_base_twist_world(
+        self,
+        target_x: float,
+        target_y: float,
+        target_yaw: float,
+        dt: float,
+        data: mujoco.MjData,
+    ) -> tuple[np.ndarray, float]:
+        """Compute commanded world-frame base twist from target SE(2)."""
+        if self._base_qpos_adr is None or self._base_qpos_adr < 0:
+            return np.zeros(3, dtype=float), 0.0
+
+        base_qadr = int(self._base_qpos_adr)
+        measured_x = float(data.qpos[base_qadr + 0])
+        measured_y = float(data.qpos[base_qadr + 1])
+        measured_yaw = self._yaw_from_quat_wxyz(data.qpos[base_qadr + 3 : base_qadr + 7])
+
+        error = np.array(
+            [
+                target_x - measured_x,
+                target_y - measured_y,
+                self._angle_difference(target_yaw, measured_yaw),
+            ],
+            dtype=float,
+        )
+
+        desired_velocity_world = np.zeros(3, dtype=float)
+        if self._prev_base_target_world is not None and dt > 1e-8:
+            prev = self._prev_base_target_world
+            desired_velocity_world[0] = (target_x - float(prev[0])) / dt
+            desired_velocity_world[1] = (target_y - float(prev[1])) / dt
+            desired_velocity_world[2] = self._angle_difference(target_yaw, float(prev[2])) / dt
+        self._prev_base_target_world = np.array([target_x, target_y, target_yaw], dtype=float)
+
+        command_world = (
+            self.base_error_gain * error
+            + self.base_velocity_gain * desired_velocity_world
+        )
+
+        linear_norm = float(np.linalg.norm(command_world[:2]))
+        if self.max_base_linear_speed > 0.0 and linear_norm > self.max_base_linear_speed:
+            command_world[:2] *= self.max_base_linear_speed / max(linear_norm, 1e-8)
+        if self.max_base_yaw_speed > 0.0:
+            command_world[2] = float(
+                np.clip(command_world[2], -self.max_base_yaw_speed, self.max_base_yaw_speed)
+            )
+
+        return command_world, measured_yaw
+
+    def _world_to_body_twist(self, twist_world: np.ndarray, yaw: float) -> np.ndarray:
+        """Convert [vx, vy, wz] world twist into body frame using current yaw."""
+        cy = math.cos(yaw)
+        sy = math.sin(yaw)
+        vx_world = float(twist_world[0])
+        vy_world = float(twist_world[1])
+        vx_body = cy * vx_world + sy * vy_world
+        vy_body = -sy * vx_world + cy * vy_world
+        return np.array([vx_body, vy_body, float(twist_world[2])], dtype=float)
+
+    def _body_twist_to_wheel_joint_vel(self, twist_body: np.ndarray) -> np.ndarray:
+        """Map body twist [vx, vy, wz] to wheel angular velocities [fr, fl, rr, rl]."""
+        vx = float(twist_body[0])
+        vy = float(twist_body[1])
+        wz = float(twist_body[2])
+        k = self.wheel_half_length + self.wheel_half_width
+        r = self.wheel_radius
+
+        # Standard 4-mecanum inverse kinematics (body frame: x-forward, y-left).
+        wheel_vel = np.array(
+            [
+                (vx - vy - k * wz) / r,  # fr
+                (vx + vy + k * wz) / r,  # fl
+                (vx + vy - k * wz) / r,  # rr
+                (vx - vy + k * wz) / r,  # rl
+            ],
+            dtype=float,
+        )
+        wheel_vel *= self.wheel_velocity_signs
+        if self.wheel_speed_limit > 0.0:
+            wheel_vel = np.clip(wheel_vel, -self.wheel_speed_limit, self.wheel_speed_limit)
+        return wheel_vel
+
+    def _apply_base_and_wheel_velocity(
+        self,
+        data: mujoco.MjData,
+        twist_world: np.ndarray,
+        wheel_vel: np.ndarray,
+    ) -> None:
+        """Apply base free-joint and wheel joint velocity commands to MuJoCo state."""
+        if self._base_dof_adr is not None and self._base_dof_adr >= 0:
+            base_dadr = int(self._base_dof_adr)
+            # Free-joint qvel order is [vx, vy, vz, wx, wy, wz].
+            data.qvel[base_dadr + 0] = float(twist_world[0])
+            data.qvel[base_dadr + 1] = float(twist_world[1])
+            data.qvel[base_dadr + 2] = 0.0
+            data.qvel[base_dadr + 3] = 0.0
+            data.qvel[base_dadr + 4] = 0.0
+            data.qvel[base_dadr + 5] = float(twist_world[2])
+
+        if self._wheel_dof_indices is not None and len(self._wheel_dof_indices) == 4:
+            data.qvel[self._wheel_dof_indices] = wheel_vel
     
     def get_last_ik_solution(self) -> tuple[np.ndarray, dict]:
         """Get the last IK solution and info for debugging."""
