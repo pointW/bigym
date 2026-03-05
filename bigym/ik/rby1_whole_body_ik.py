@@ -706,14 +706,7 @@ class RBY1WholeBodyIK:
         right_arm_4_group = {"right_arm_4_col_0", "right_arm_4_col_1", "right_arm_4_col_2", "right_arm_4_col_3", "right_arm_4_col_4"}
         right_arm_5_group = {"right_arm_5_col_0", "right_arm_5_col_1", "right_arm_5_col_2"}
         right_arm_6_group = {"right_arm_6_col_0"}
-        right_arm_7_group = {"right_arm_7_col_0", "right_wrist_cam_col_0", "right_wrist_cam_col_1", "right_wrist_cam_col_2"}
-        right_ee_group = {
-            "right_ee_col_0",
-            "right_ee_col_1",
-            "right_ee_col_2",
-            "right_ee_col_3",
-            "right_ee_col_4",
-        }
+        right_arm_7_group = {"right_arm_7_col_0"}
 
         left_arm_0_group = {"left_arm_0_col_0", "left_arm_0_col_1", "left_arm_0_col_2"}
         left_arm_1_group = {"left_arm_1_col_0"}
@@ -722,14 +715,7 @@ class RBY1WholeBodyIK:
         left_arm_4_group = {"left_arm_4_col_0", "left_arm_4_col_1", "left_arm_4_col_2", "left_arm_4_col_3", "left_arm_4_col_4"}
         left_arm_5_group = {"left_arm_5_col_0", "left_arm_5_col_1", "left_arm_5_col_2"}
         left_arm_6_group = {"left_arm_6_col_0"}
-        left_arm_7_group = {"left_arm_7_col_0", "left_wrist_cam_col_0", "left_wrist_cam_col_1", "left_wrist_cam_col_2"}
-        left_ee_group = {
-            "left_ee_col_0",
-            "left_ee_col_1",
-            "left_ee_col_2",
-            "left_ee_col_3",
-            "left_ee_col_4",
-        }
+        left_arm_7_group = {"left_arm_7_col_0"}
 
         if self.has_namespace:
             base_group = {"rby1/" + name for name in base_group}
@@ -746,7 +732,6 @@ class RBY1WholeBodyIK:
             right_arm_5_group = {"rby1/" + name for name in right_arm_5_group}
             right_arm_6_group = {"rby1/" + name for name in right_arm_6_group}
             right_arm_7_group = {"rby1/" + name for name in right_arm_7_group}
-            right_ee_group = {"rby1/" + name for name in right_ee_group}
             left_arm_0_group = {"rby1/" + name for name in left_arm_0_group}
             left_arm_1_group = {"rby1/" + name for name in left_arm_1_group}
             left_arm_2_group = {"rby1/" + name for name in left_arm_2_group}
@@ -755,13 +740,11 @@ class RBY1WholeBodyIK:
             left_arm_5_group = {"rby1/" + name for name in left_arm_5_group}
             left_arm_6_group = {"rby1/" + name for name in left_arm_6_group}
             left_arm_7_group = {"rby1/" + name for name in left_arm_7_group}
-            left_ee_group = {"rby1/" + name for name in left_ee_group}
             head_group = {"rby1/" + name for name in head_group}
 
         base_torso_group = base_group | torso_0_group | torso_1_group | torso_2_group | torso_4_group | torso_5_group | head_group
-        left_arm_group = left_arm_0_group | left_arm_1_group | left_arm_2_group | left_arm_3_group | left_arm_4_group | left_arm_5_group | left_arm_6_group | left_arm_7_group | left_ee_group
-        right_arm_group = right_arm_0_group | right_arm_1_group | right_arm_2_group | right_arm_3_group | right_arm_4_group | right_arm_5_group | right_arm_6_group | right_arm_7_group | right_ee_group
-
+        left_arm_group = left_arm_0_group | left_arm_1_group | left_arm_2_group | left_arm_3_group | left_arm_4_group | left_arm_5_group | left_arm_6_group | left_arm_7_group
+        right_arm_group = right_arm_0_group | right_arm_1_group | right_arm_2_group | right_arm_3_group | right_arm_4_group | right_arm_5_group | right_arm_6_group | right_arm_7_group
         robot_collision_group = base_torso_group | left_arm_group | right_arm_group
         environment_geom_group = self._get_environment_geoms()
         self_geom_pairs = [
