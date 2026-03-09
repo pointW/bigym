@@ -701,6 +701,7 @@ def convert_h1_demos_batch(
     demo_amount: int = -1,
     output_dir: str = None,
     camera_configs: Optional[List[CameraConfig]] = None,
+    camera_resolution: int = 84,
     control_frequency: int = 50,
     render_mode: Optional[str] = None,
     robot_type: str = "rby1",
@@ -728,6 +729,7 @@ def convert_h1_demos_batch(
         demo_amount: Number of demos to convert
         output_dir: Directory to save converted demos (auto-generated if None)
         camera_configs: Camera configurations (uses defaults if None)
+        camera_resolution: Square RGB resolution used when camera_configs is None
         control_frequency: Control frequency
         render_mode: Render mode for conversion
         robot_type: Target robot type (default "rby1")
@@ -757,9 +759,9 @@ def convert_h1_demos_batch(
     # Use default camera config if not provided
     if camera_configs is None:
         camera_configs = [
-            CameraConfig("head", resolution=(84, 84)),
-            CameraConfig("left_wrist", resolution=(84, 84)),
-            CameraConfig("right_wrist", resolution=(84, 84)),
+            CameraConfig("head", resolution=(camera_resolution, camera_resolution)),
+            CameraConfig("left_wrist", resolution=(camera_resolution, camera_resolution)),
+            CameraConfig("right_wrist", resolution=(camera_resolution, camera_resolution)),
         ]
     if with_pointcloud:
         camera_configs = [CameraConfig(**vars(cam)) for cam in camera_configs]
@@ -1050,6 +1052,12 @@ def main():
         help="Output directory (auto-generated if not specified)"
     )
     parser.add_argument(
+        "--camera-resolution",
+        type=int,
+        default=84,
+        help="Square RGB camera resolution for head/left_wrist/right_wrist (default: 84)"
+    )
+    parser.add_argument(
         "--control-freq",
         type=int,
         default=50,
@@ -1167,6 +1175,7 @@ def main():
         env_name=args.env,
         demo_amount=args.max_demos,
         output_dir=args.output_dir,
+        camera_resolution=args.camera_resolution,
         control_frequency=args.control_freq,
         render_mode="human" if args.render else None,
         robot_type=args.robot,
