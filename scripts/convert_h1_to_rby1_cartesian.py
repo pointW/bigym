@@ -380,6 +380,13 @@ def _build_rby1_hold_action_from_obs(obs: Dict[str, np.ndarray]) -> Optional[np.
     )
 
 
+def _strip_raw_depth_obs(obs: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop raw depth images from an observation dict while keeping point clouds."""
+    if not isinstance(obs, dict):
+        return obs
+    return {k: v for k, v in obs.items() if not (isinstance(k, str) and k.startswith("depth_"))}
+
+
 def convert_h1_demo_to_rby1_cartesian(
     original_demo: Demo,
     env_class: Type,
@@ -434,7 +441,7 @@ def convert_h1_demo_to_rby1_cartesian(
         camera_configs = [CameraConfig(**vars(cam)) for cam in camera_configs]
         for cam in camera_configs:
             cam.rgb = True
-            cam.depth = True
+            cam.depth = False
             cam.pcd = True
             cam.pcd_points = int(pcd_points)
             cam.pcd_min_dist = pcd_min_dist
@@ -605,6 +612,7 @@ def convert_h1_demo_to_rby1_cartesian(
             rby1_env.action_space.high,
         )
         obs, reward, terminated, truncated, info = rby1_env.step(clipped_action)
+        obs = _strip_raw_depth_obs(obs)
         rby1_obs = obs
         info = info or {}
         last_info = info
@@ -701,7 +709,7 @@ def convert_h1_demos_batch(
     demo_amount: int = -1,
     output_dir: str = None,
     camera_configs: Optional[List[CameraConfig]] = None,
-    camera_resolution: int = 84,
+    camera_resolution: int = 224,
     control_frequency: int = 50,
     render_mode: Optional[str] = None,
     robot_type: str = "rby1",
@@ -767,7 +775,7 @@ def convert_h1_demos_batch(
         camera_configs = [CameraConfig(**vars(cam)) for cam in camera_configs]
         for cam in camera_configs:
             cam.rgb = True
-            cam.depth = True
+            cam.depth = False
             cam.pcd = True
             cam.pcd_points = int(pcd_points)
             cam.pcd_min_dist = pcd_min_dist
@@ -1054,8 +1062,8 @@ def main():
     parser.add_argument(
         "--camera-resolution",
         type=int,
-        default=84,
-        help="Square RGB camera resolution for head/left_wrist/right_wrist (default: 84)"
+        default=224,
+        help="Square RGB camera resolution for head/left_wrist/right_wrist (default: 224)"
     )
     parser.add_argument(
         "--control-freq",
