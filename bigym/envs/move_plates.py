@@ -154,7 +154,6 @@ class MovePlate(_MovePlatesEnv):
             "RBY1",
             "RBY1FineManipulation",
         }:
-            # Freeze MovePlate defaults to current RBY1 init perturb ranges.
             robot_kwargs = {
                 "base_perturb_x_range": (-0.1, 0.1),
                 "base_perturb_y_range": (-0.1, 0.1),
@@ -200,6 +199,45 @@ class MoveTwoPlates(_MovePlatesEnv):
     """Move two plates from one rack to another."""
 
     _PLATES_COUNT = 2
+
+    def __init__(
+        self,
+        action_mode,
+        observation_config: ObservationConfig = ObservationConfig(),
+        render_mode=None,
+        start_seed=None,
+        control_frequency: int = CONTROL_FREQUENCY_MAX,
+        robot_cls=None,
+        robot_kwargs=None,
+    ):
+        resolved_robot_cls = robot_cls or self.DEFAULT_ROBOT
+        if robot_kwargs is None and getattr(resolved_robot_cls, "__name__", None) in {
+            "RBY1",
+            "RBY1FineManipulation",
+        }:
+            robot_kwargs = {
+                "base_perturb_x_range": (-0.1, 0.0),
+                "base_perturb_y_range": (-0.1, 0.1),
+                "base_perturb_yaw_range": (
+                    -np.deg2rad(20.0),
+                    np.deg2rad(20.0),
+                ),
+                "ee_perturb_pos_range": (-0.1, 0.1),
+                "ee_perturb_rot_range": (
+                    -np.deg2rad(20.0),
+                    np.deg2rad(20.0),
+                ),
+            }
+
+        super().__init__(
+            action_mode=action_mode,
+            observation_config=observation_config,
+            render_mode=render_mode,
+            start_seed=start_seed,
+            control_frequency=control_frequency,
+            robot_cls=robot_cls,
+            robot_kwargs=robot_kwargs,
+        )
 
     def _get_task_privileged_obs_space(self):
         return {}
