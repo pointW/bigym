@@ -61,7 +61,8 @@ class _MovePlatesEnv(BiGymEnv, ABC):
 
     def _success(self) -> bool:
         up = np.array([0, 0, 1])
-        right = np.array([0, -1, 0])
+        right_local = np.array([0, -1, 0])
+        right = Quaternion(self.rack_target.body.get_quaternion()).rotate(right_local)
         for plate in self.plates:
             if np.all(
                 [
@@ -71,7 +72,10 @@ class _MovePlatesEnv(BiGymEnv, ABC):
             ):
                 return False
             plate_up = Quaternion(plate.body.get_quaternion()).rotate(up)
-            angle = np.arccos(np.clip(np.dot(plate_up, right), -1.0, 1.0))
+            cos_angle = np.dot(plate_up, right) / (
+                np.linalg.norm(plate_up) * np.linalg.norm(right) + 1e-12
+            )
+            angle = np.arccos(np.clip(cos_angle, -1.0, 1.0))
             if angle > self._SUCCESS_ROT:
                 return False
             if not plate.is_colliding(self.rack_target):
@@ -97,6 +101,10 @@ class _MovePlatesEnv(BiGymEnv, ABC):
         if max_z is not None:
             return float(max_z) - self._PCD_SURFACE_KEEP_EPS
         return float(self.table.body.get_position()[2]) - self._PCD_SURFACE_KEEP_EPS
+
+    def _sample_start_sites(self):
+        sites = np.array(self.rack_start.sites)
+        return np.random.choice(sites, size=len(self.plates), replace=False)
 
     def _on_reset(self):
         if not _bigym_perturb_enabled():
@@ -126,8 +134,7 @@ class _MovePlatesEnv(BiGymEnv, ABC):
             self.rack_target.body.set_position(pos, True)
             self.rack_target.body.set_quaternion(quat.elements, True)
 
-        sites = np.array(self.rack_start.sites)
-        sites = np.random.choice(sites, size=len(self.plates), replace=False)
+        sites = self._sample_start_sites()
 
         for site, plate in zip(sites, self.plates):
             plate.body.set_position(site.get_position() + PLATE_OFFSET_POS, True)
@@ -155,7 +162,7 @@ class MovePlate(_MovePlatesEnv):
             "RBY1FineManipulation",
         }:
             robot_kwargs = {
-                "base_perturb_x_range": (-0.1, 0.1),
+                "base_perturb_x_range": (-0.1, 0.0),
                 "base_perturb_y_range": (-0.1, 0.1),
                 "base_perturb_yaw_range": (
                     -np.deg2rad(20.0),
@@ -244,3 +251,22 @@ class MoveTwoPlates(_MovePlatesEnv):
 
     def _get_task_privileged_obs(self):
         return {}
+
+    def _sample_start_sites(self):
+        sites = np.array(self.rack_start.sites)
+        if len(sites) < len(self.plates):
+            raise ValueError(
+                f"Not enough start rack sites: {len(sites)} for {len(self.plates)} plates."
+            )
+
+        valid_pairs = [
+            (i, j)
+            for i in range(len(sites))
+            for j in range(i + 1, len(sites))
+            if abs(i - j) > 1
+        ]
+        if not valid_pairs:
+            return np.random.choice(sites, size=len(self.plates), replace=False)
+
+        pair_idx = np.random.randint(len(valid_pairs))
+        return sites[list(valid_pairs[pair_idx])]
