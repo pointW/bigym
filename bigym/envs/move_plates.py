@@ -96,11 +96,8 @@ class _MovePlatesEnv(BiGymEnv, ABC):
         return False
 
     def _get_reset_pcd_min_world_z(self):
-        """Keep table-surface and above using current table collider geometry."""
-        max_z = self._max_world_z_from_colliders(self.table.colliders)
-        if max_z is not None:
-            return float(max_z) - self._PCD_SURFACE_KEEP_EPS
-        return float(self.table.body.get_position()[2]) - self._PCD_SURFACE_KEEP_EPS
+        """Keep rack/table support plane and above using rack base height."""
+        return float(self.rack_target.body.get_position()[2]) - self._PCD_SURFACE_KEEP_EPS
 
     def _sample_start_sites(self):
         sites = np.array(self.rack_start.sites)
