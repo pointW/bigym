@@ -670,6 +670,16 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
             )
             if self._base_qpos_adr is not None and self._base_qpos_adr >= 0:
                 self._base_z_ref = float(data.qpos[int(self._base_qpos_adr) + 2])
+
+    def on_reset_warmup_step(self):
+        """Keep wheel-velocity base state on SE(2) during passive reset warmup."""
+        if self.base_control_mode != "wheel_velocity":
+            return
+        if self._mojo is None or getattr(self._mojo, "physics", None) is None:
+            return
+        data = self._mojo.physics.data._data
+        self._zero_base_and_wheel_velocity(data)
+        self._project_base_pose_to_se2(data)
         
     def _initialize_ik_solver(self):
         """Initialize the RBY1 whole-body IK solver."""

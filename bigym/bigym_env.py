@@ -703,6 +703,7 @@ class BiGymEnv(gym.Env):
             with self._env_health.track():
                 for _ in range(self._sub_steps_count):
                     self._mojo.step()
+                    self.action_mode.on_reset_warmup_step()
                     mujoco.mj_rnePostConstraint(self._mojo.model, self._mojo.data)
             self._on_step()
             if not self.is_healthy:

@@ -101,6 +101,10 @@ class ActionMode(ABC):
         """
         pass
 
+    def on_reset_warmup_step(self):
+        """Optional hook invoked after each passive reset warmup sim step."""
+        return
+
 
 class TorqueActionMode(ActionMode):
     """Control all joints through torque control.
