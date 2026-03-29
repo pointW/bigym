@@ -405,6 +405,7 @@ def convert_h1_demo_to_rby1_cartesian(
     pcd_max_dist: Optional[float] = 3.0,
     pcd_min_world_z: Optional[float] = 0.01,
     warmup_steps: int = 55,
+    success_settle_steps: int = 50,
 ) -> Tuple[Demo, bool]:
     """Convert a single H1 joint demo to RBY1 Cartesian demo.
     
@@ -428,6 +429,8 @@ def convert_h1_demo_to_rby1_cartesian(
         pcd_min_world_z: Minimum world-frame z (meters) to keep point-cloud points
         warmup_steps: Number of stabilization steps after RBY1 reset.
             Warmup steps are not recorded in the output demo.
+        success_settle_steps: Number of additional hold steps before success
+            judgment. Settle steps are not recorded in the output demo.
         
     Returns:
         Tuple of (converted demo, success flag from RBY1 rollout)
@@ -629,6 +632,21 @@ def convert_h1_demo_to_rby1_cartesian(
         if terminated or truncated:
             break
     
+    settle_steps = int(max(0, success_settle_steps))
+    if settle_steps > 0:
+        hold_action = _build_rby1_hold_action_from_obs(rby1_obs)
+        if hold_action is None:
+            hold_action = np.zeros_like(rby1_env.action_space.low, dtype=np.float64)
+        for _ in range(settle_steps):
+            clipped_hold = np.clip(
+                hold_action,
+                rby1_env.action_space.low,
+                rby1_env.action_space.high,
+            )
+            rby1_obs, _, _, _, info = rby1_env.step(clipped_hold)
+            rby1_obs = _strip_raw_depth_obs(rby1_obs)
+            last_info = info or {}
+
     rby1_metadata = Metadata.from_env(rby1_env)
     rby1_metadata.seed = original_demo.seed
     success = bool(last_info.get("task_success", False)) if last_info else bool(rby1_env.success)
@@ -656,6 +674,7 @@ def _convert_demo_worker(
         Optional[float],
         Optional[float],
         int,
+        int,
     ]
 ) -> Tuple[int, bool, Optional[Demo], Optional[str]]:
     """Worker for multiprocessing demo conversion."""
@@ -677,6 +696,7 @@ def _convert_demo_worker(
         pcd_max_dist,
         pcd_min_world_z,
         warmup_steps,
+        success_settle_steps,
     ) = payload
     try:
         env_class = get_environment_class(env_name)
@@ -698,6 +718,7 @@ def _convert_demo_worker(
             pcd_max_dist=pcd_max_dist,
             pcd_min_world_z=pcd_min_world_z,
             warmup_steps=warmup_steps,
+            success_settle_steps=success_settle_steps,
         )
         return index, success, rby1_demo, None
     except Exception:
@@ -729,6 +750,7 @@ def convert_h1_demos_batch(
     pcd_max_dist: Optional[float] = 3.0,
     pcd_min_world_z: Optional[float] = 0.01,
     warmup_steps: int = 55,
+    success_settle_steps: int = 50,
 ) -> List[Demo]:
     """Convert a batch of H1 demonstrations to RBY1 Cartesian format.
     
@@ -757,6 +779,8 @@ def convert_h1_demos_batch(
         pcd_max_dist: Maximum camera distance (meters) to keep points
         pcd_min_world_z: Minimum world-frame z (meters) to keep point-cloud points
         warmup_steps: Number of stabilization steps after RBY1 reset.
+        success_settle_steps: Number of additional hold steps before success
+            judgment. Settle steps are not recorded.
         
     Returns:
         List of converted RBY1 Cartesian demos
@@ -914,6 +938,7 @@ def convert_h1_demos_batch(
                     pcd_max_dist,
                     pcd_min_world_z,
                     warmup_steps,
+                    success_settle_steps,
                 )
             )
 
@@ -971,6 +996,7 @@ def convert_h1_demos_batch(
                 pcd_max_dist,
                 pcd_min_world_z,
                 warmup_steps,
+                success_settle_steps,
             ) = payload
             try:
                 rby1_demo, success = convert_h1_demo_to_rby1_cartesian(
@@ -991,6 +1017,7 @@ def convert_h1_demos_batch(
                     pcd_max_dist=pcd_max_dist,
                     pcd_min_world_z=pcd_min_world_z,
                     warmup_steps=warmup_steps,
+                    success_settle_steps=success_settle_steps,
                 )
                 results[index] = (success, rby1_demo, None)
             except Exception:
@@ -1175,6 +1202,12 @@ def main():
         default=55,
         help="Number of stabilization steps after RBY1 reset (default: 55)"
     )
+    parser.add_argument(
+        "--success-settle-steps",
+        type=int,
+        default=50,
+        help="Number of non-recorded hold steps before success judgment (default: 50)"
+    )
     
     args = parser.parse_args()
     
@@ -1203,6 +1236,7 @@ def main():
         pcd_max_dist=args.pcd_max_dist,
         pcd_min_world_z=args.pcd_min_world_z,
         warmup_steps=args.warmup_steps,
+        success_settle_steps=args.success_settle_steps,
     )
     
     print(f"\nConversion complete! Converted {len(converted_demos)} H1 demos to RBY1 Cartesian format.")
