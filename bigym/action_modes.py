@@ -67,6 +67,33 @@ class ActionMode(ABC):
         self._mojo = mojo
 
     @property
+    def uses_env_substep_schedule(self) -> bool:
+        """Whether the env should drive substeps and call into this action mode."""
+        return False
+
+    def begin_control_step(
+        self,
+        action: np.ndarray,
+        total_substeps: int,
+        physics_frequency: int,
+    ) -> None:
+        """Prepare state for an env-owned control tick."""
+        raise NotImplementedError
+
+    def apply_control_substep(
+        self,
+        substep_idx: int,
+        total_substeps: int,
+        physics_frequency: int,
+    ) -> None:
+        """Apply targets/ctrls for one env-owned substep."""
+        raise NotImplementedError
+
+    def end_control_step(self) -> None:
+        """Clean up state after an env-owned control tick."""
+        return None
+
+    @property
     def floating_base(self) -> bool:
         """Is floating base enabled."""
         return self._floating_base

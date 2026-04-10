@@ -392,7 +392,9 @@ def convert_h1_demo_to_rby1_cartesian(
     env_class: Type,
     env_name: str,
     camera_configs: List[CameraConfig],
-    control_frequency: int = 50,
+    control_frequency: int = 20,
+    interpolation_frequency: int = 20,
+    low_pass_freq_hz: float = 10.0,
     render_mode: Optional[str] = None,
     robot_type: str = "rby1",
     blend_steps: int = 0,
@@ -404,7 +406,6 @@ def convert_h1_demo_to_rby1_cartesian(
     pcd_min_dist: Optional[float] = None,
     pcd_max_dist: Optional[float] = 3.0,
     pcd_min_world_z: Optional[float] = 0.01,
-    warmup_steps: int = 55,
     success_settle_steps: int = 50,
 ) -> Tuple[Demo, bool]:
     """Convert a single H1 joint demo to RBY1 Cartesian demo.
@@ -415,6 +416,8 @@ def convert_h1_demo_to_rby1_cartesian(
         env_name: Name of the environment for DOF detection
         camera_configs: Camera configurations for the environment
         control_frequency: Control frequency for the environment
+        interpolation_frequency: IK/interpolation update frequency for RBY1
+        low_pass_freq_hz: Low-pass cutoff for RBY1 command smoothing
         render_mode: Render mode (None for headless)
         robot_type: Target robot type (should be "rby1")
         blend_steps: Number of initial steps to blend from perturbed pose
@@ -427,8 +430,6 @@ def convert_h1_demo_to_rby1_cartesian(
         pcd_min_dist: Minimum camera distance (meters) to keep points
         pcd_max_dist: Maximum camera distance (meters) to keep points
         pcd_min_world_z: Minimum world-frame z (meters) to keep point-cloud points
-        warmup_steps: Number of stabilization steps after RBY1 reset.
-            Warmup steps are not recorded in the output demo.
         success_settle_steps: Number of additional hold steps before success
             judgment. Settle steps are not recorded in the output demo.
         
@@ -543,6 +544,8 @@ def convert_h1_demo_to_rby1_cartesian(
             block_until_reached=False,
             direct_mode=False,
             control_frequency=control_frequency,
+            interpolation_frequency=interpolation_frequency,
+            low_pass_freq_hz=low_pass_freq_hz,
         ),
         control_frequency=control_frequency,
         observation_config=ObservationConfig(cameras=camera_configs),
@@ -583,19 +586,6 @@ def convert_h1_demo_to_rby1_cartesian(
         else:
             os.environ["BIGYM_DISABLE_PERTURB"] = prev_bigym_disable_perturb
 
-    warmup_steps = int(max(0, warmup_steps))
-    if warmup_steps > 0:
-        hold_action = _build_rby1_hold_action_from_obs(rby1_obs)
-        if hold_action is None:
-            hold_action = np.zeros_like(rby1_env.action_space.low, dtype=np.float64)
-        for _ in range(warmup_steps):
-            clipped_hold = np.clip(
-                hold_action,
-                rby1_env.action_space.low,
-                rby1_env.action_space.high,
-            )
-            rby1_obs, _, _, _, _ = rby1_env.step(clipped_hold)
-
     timesteps: list[DemoStep] = []
     last_info: Dict[str, Any] = {}
     for step_idx, cartesian_action in enumerate(cartesian_actions):
@@ -634,10 +624,12 @@ def convert_h1_demo_to_rby1_cartesian(
     
     settle_steps = int(max(0, success_settle_steps))
     if settle_steps > 0:
-        hold_action = _build_rby1_hold_action_from_obs(rby1_obs)
-        if hold_action is None:
-            hold_action = np.zeros_like(rby1_env.action_space.low, dtype=np.float64)
         for _ in range(settle_steps):
+            hold_action = _build_rby1_hold_action_from_obs(rby1_obs)
+            if hold_action is None:
+                hold_action = np.zeros_like(
+                    rby1_env.action_space.low, dtype=np.float64
+                )
             clipped_hold = np.clip(
                 hold_action,
                 rby1_env.action_space.low,
@@ -662,6 +654,8 @@ def _convert_demo_worker(
         str,
         List[CameraConfig],
         int,
+        int,
+        float,
         Optional[str],
         str,
         int,
@@ -684,6 +678,8 @@ def _convert_demo_worker(
         env_name,
         camera_configs,
         control_frequency,
+        interpolation_frequency,
+        low_pass_freq_hz,
         render_mode,
         robot_type,
         blend_steps,
@@ -695,7 +691,6 @@ def _convert_demo_worker(
         pcd_min_dist,
         pcd_max_dist,
         pcd_min_world_z,
-        warmup_steps,
         success_settle_steps,
     ) = payload
     try:
@@ -706,6 +701,8 @@ def _convert_demo_worker(
             env_name,
             camera_configs,
             control_frequency,
+            interpolation_frequency,
+            low_pass_freq_hz,
             render_mode,
             robot_type,
             blend_steps=blend_steps,
@@ -717,7 +714,6 @@ def _convert_demo_worker(
             pcd_min_dist=pcd_min_dist,
             pcd_max_dist=pcd_max_dist,
             pcd_min_world_z=pcd_min_world_z,
-            warmup_steps=warmup_steps,
             success_settle_steps=success_settle_steps,
         )
         return index, success, rby1_demo, None
@@ -731,7 +727,9 @@ def convert_h1_demos_batch(
     output_dir: str = None,
     camera_configs: Optional[List[CameraConfig]] = None,
     camera_resolution: int = 224,
-    control_frequency: int = 50,
+    control_frequency: int = 20,
+    interpolation_frequency: int = 20,
+    low_pass_freq_hz: float = 10.0,
     render_mode: Optional[str] = None,
     robot_type: str = "rby1",
     blend_steps: int = 0,
@@ -749,7 +747,6 @@ def convert_h1_demos_batch(
     pcd_min_dist: Optional[float] = None,
     pcd_max_dist: Optional[float] = 3.0,
     pcd_min_world_z: Optional[float] = 0.01,
-    warmup_steps: int = 55,
     success_settle_steps: int = 50,
 ) -> List[Demo]:
     """Convert a batch of H1 demonstrations to RBY1 Cartesian format.
@@ -761,6 +758,8 @@ def convert_h1_demos_batch(
         camera_configs: Camera configurations (uses defaults if None)
         camera_resolution: Square RGB resolution used when camera_configs is None
         control_frequency: Control frequency
+        interpolation_frequency: IK/interpolation update frequency for RBY1
+        low_pass_freq_hz: Low-pass cutoff for RBY1 command smoothing
         render_mode: Render mode for conversion
         robot_type: Target robot type (default "rby1")
         blend_steps: Number of initial steps to blend from perturbed pose
@@ -778,7 +777,6 @@ def convert_h1_demos_batch(
         pcd_min_dist: Minimum camera distance (meters) to keep points
         pcd_max_dist: Maximum camera distance (meters) to keep points
         pcd_min_world_z: Minimum world-frame z (meters) to keep point-cloud points
-        warmup_steps: Number of stabilization steps after RBY1 reset.
         success_settle_steps: Number of additional hold steps before success
             judgment. Settle steps are not recorded.
         
@@ -926,6 +924,8 @@ def convert_h1_demos_batch(
                     env_name,
                     camera_configs,
                     control_frequency,
+                    interpolation_frequency,
+                    low_pass_freq_hz,
                     render_mode,
                     robot_type,
                     blend_steps,
@@ -937,7 +937,6 @@ def convert_h1_demos_batch(
                     pcd_min_dist,
                     pcd_max_dist,
                     pcd_min_world_z,
-                    warmup_steps,
                     success_settle_steps,
                 )
             )
@@ -988,6 +987,8 @@ def convert_h1_demos_batch(
                 _,
                 _,
                 _,
+                _,
+                _,
                 perturb_seed,
                 enable_perturb,
                 with_pointcloud,
@@ -995,7 +996,6 @@ def convert_h1_demos_batch(
                 pcd_min_dist,
                 pcd_max_dist,
                 pcd_min_world_z,
-                warmup_steps,
                 success_settle_steps,
             ) = payload
             try:
@@ -1005,6 +1005,8 @@ def convert_h1_demos_batch(
                     env_name,
                     camera_configs,
                     control_frequency,
+                    interpolation_frequency,
+                    low_pass_freq_hz,
                     render_mode,
                     robot_type,
                     blend_steps=blend_steps,
@@ -1016,7 +1018,6 @@ def convert_h1_demos_batch(
                     pcd_min_dist=pcd_min_dist,
                     pcd_max_dist=pcd_max_dist,
                     pcd_min_world_z=pcd_min_world_z,
-                    warmup_steps=warmup_steps,
                     success_settle_steps=success_settle_steps,
                 )
                 results[index] = (success, rby1_demo, None)
@@ -1095,8 +1096,20 @@ def main():
     parser.add_argument(
         "--control-freq",
         type=int,
-        default=50,
-        help="Control frequency (default: 50)"
+        default=20,
+        help="Control frequency (default: 20)"
+    )
+    parser.add_argument(
+        "--interpolation-frequency",
+        type=int,
+        default=20,
+        help="RBY1 IK/interpolation frequency (default: 20)"
+    )
+    parser.add_argument(
+        "--low-pass-freq-hz",
+        type=float,
+        default=10.0,
+        help="RBY1 command low-pass cutoff in Hz (default: 10)"
     )
     parser.add_argument(
         "--render",
@@ -1197,18 +1210,11 @@ def main():
         help="Minimum world-frame z (meters) to keep point-cloud points"
     )
     parser.add_argument(
-        "--warmup-steps",
-        type=int,
-        default=55,
-        help="Number of stabilization steps after RBY1 reset (default: 55)"
-    )
-    parser.add_argument(
         "--success-settle-steps",
         type=int,
         default=50,
         help="Number of non-recorded hold steps before success judgment (default: 50)"
     )
-    
     args = parser.parse_args()
     
     # Convert H1 demos to RBY1 Cartesian
@@ -1218,6 +1224,8 @@ def main():
         output_dir=args.output_dir,
         camera_resolution=args.camera_resolution,
         control_frequency=args.control_freq,
+        interpolation_frequency=args.interpolation_frequency,
+        low_pass_freq_hz=args.low_pass_freq_hz,
         render_mode="human" if args.render else None,
         robot_type=args.robot,
         blend_steps=args.blend_steps,
@@ -1235,7 +1243,6 @@ def main():
         pcd_min_dist=args.pcd_min_dist,
         pcd_max_dist=args.pcd_max_dist,
         pcd_min_world_z=args.pcd_min_world_z,
-        warmup_steps=args.warmup_steps,
         success_settle_steps=args.success_settle_steps,
     )
     
