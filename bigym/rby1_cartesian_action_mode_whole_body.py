@@ -115,9 +115,10 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         position_limits: tuple[float, float] = (-2.0, 2.0),
         block_until_reached: bool = False,
         direct_mode: bool = False,
-        control_frequency: int = 50,
-        interpolation_frequency: int = 50,
-        low_level_frequency: int = 1000,
+        control_frequency: int = 20,
+        interpolation_frequency: int = 20,
+        low_level_frequency: int = 500,
+        low_pass_freq_hz: float = 10.0,
     ):
         """Initialize RBY1 Cartesian action mode with whole-body IK.
         
@@ -125,9 +126,10 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
             position_limits: Min/max limits for end-effector positions
             block_until_reached: Whether to block until position is reached
             direct_mode: If True, directly set joint qpos (bypassing controllers)
-            control_frequency: Control frequency in Hz (default: 50)
-            interpolation_frequency: Frequency for IK waypoints in Hz (default: 100)
+            control_frequency: Control frequency in Hz (default: 20)
+            interpolation_frequency: Frequency for IK waypoints in Hz (default: 20)
             low_level_frequency: Physics simulation frequency in Hz (default: 500)
+            low_pass_freq_hz: Command low-pass cutoff in Hz (default: 10)
         """
         
         # Initialize parent with no floating DOFs (we handle base control via whole-body IK)
@@ -139,11 +141,21 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         self.control_frequency = control_frequency
         self.interpolation_frequency = interpolation_frequency  # Frequency for IK waypoints
         self.low_level_frequency = low_level_frequency  # Physics simulation frequency
+        self.low_pass_freq_hz = float(low_pass_freq_hz)
         self._ik_solver = None
         self._base_target_body_id = None
         self._last_ik_solution = None  # Store last IK solution to avoid recomputation
         self._last_ik_info = None  # Store IK solver info for debugging
-        
+        self._pending_step_state = None
+        self._filtered_joint_positions = None
+        self._filtered_mocap_pos = None
+        self._filtered_mocap_quat = None
+
+    @property
+    def uses_env_substep_schedule(self) -> bool:
+        """Use env-owned substeps so interpolation stays aligned with sim time."""
+        return True
+
     def bind_robot(self, robot, mojo):
         """Bind action mode to robot."""
         super().bind_robot(robot, mojo)
@@ -195,226 +207,288 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         )
     
     def step(self, action: np.ndarray):
-        """Execute Cartesian action using whole-body IK with target interpolation.
-        
-        Steps:
-        1. Calculate number of waypoints from interpolation_frequency and control_frequency
-        2. Interpolate end-effector targets for each waypoint
-        3. Solve whole-body IK for each interpolated target
-        4. Apply IK solution and step physics based on low_level_frequency
-        5. Control grippers
-        
-        Args:
-            action: Cartesian action vector (20D)
-        """
-        # Initialize IK solver if not done yet
+        """Fallback direct execution path when called outside env-owned stepping."""
+        physics_frequency = int(round(self.low_level_frequency))
+        total_substeps = max(1, int(round(physics_frequency / max(self.control_frequency, 1))))
+        self.begin_control_step(
+            action,
+            total_substeps=total_substeps,
+            physics_frequency=physics_frequency,
+        )
+        try:
+            for substep_idx in range(total_substeps):
+                self.apply_control_substep(
+                    substep_idx,
+                    total_substeps=total_substeps,
+                    physics_frequency=physics_frequency,
+                )
+                self._mojo.step()
+            if self.block_until_reached:
+                self._step_until_reached()
+        finally:
+            self.end_control_step()
+
+    def begin_control_step(
+        self,
+        action: np.ndarray,
+        total_substeps: int,
+        physics_frequency: int,
+    ) -> None:
         if self._ik_solver is None:
             self._initialize_ik_solver()
-        
-        # Find base_target mocap body if not done yet
+
         if self._base_target_body_id is None:
             model = self._mojo.physics.model._model
             self._base_target_body_id = mujoco.mj_name2id(
                 model, mujoco.mjtObj.mjOBJ_BODY, "base_target"
             )
             if self._base_target_body_id < 0:
-                # Mocap body doesn't exist, we need to handle this
                 print("WARNING: base_target mocap body not found in model")
                 self._base_target_body_id = -1
-            
-        # Parse action components
+
         idx = 0
-        
-        # Left end-effector pose
-        left_pos = action[idx:idx+3]
+        left_pos = action[idx:idx + 3]
         idx += 3
-        left_rot_6d = action[idx:idx+6] 
+        left_rot_6d = action[idx:idx + 6]
         idx += 6
         left_rot_matrix = rotation_6d_to_matrix(left_rot_6d)
         left_quat = Quaternion(matrix=left_rot_matrix, atol=1e-6, rtol=1e-6)
-        
-        # Right end-effector pose
-        right_pos = action[idx:idx+3]
+
+        right_pos = action[idx:idx + 3]
         idx += 3
-        right_rot_6d = action[idx:idx+6]
-        idx += 6  
+        right_rot_6d = action[idx:idx + 6]
+        idx += 6
         right_rot_matrix = rotation_6d_to_matrix(right_rot_6d)
         right_quat = Quaternion(matrix=right_rot_matrix, atol=1e-6, rtol=1e-6)
-        
-        # Gripper control
-        gripper_action = action[idx:]
-        
-        # Convert target quaternions to numpy arrays in wxyz format
+
+        gripper_action = np.asarray(action[idx:], dtype=np.float64)
+        for side, grip_action in zip(self._robot.grippers, gripper_action):
+            self._robot.grippers[side].set_control(grip_action)
+
         target_left_quat_np = np.array([left_quat.w, left_quat.x, left_quat.y, left_quat.z])
         target_right_quat_np = np.array([right_quat.w, right_quat.x, right_quat.y, right_quat.z])
-        
-        # Store final target poses for convergence checking
         self._target_left_pos = left_pos
         self._target_left_quat = target_left_quat_np
         self._target_right_pos = right_pos
         self._target_right_quat = target_right_quat_np
-        
-        # Get current end-effector poses for interpolation
+
         current_left_pose, current_right_pose = self.get_current_ee_poses()
         current_left_pos = current_left_pose.position
         current_left_quat_np = np.array([
             current_left_pose.orientation.w,
             current_left_pose.orientation.x,
             current_left_pose.orientation.y,
-            current_left_pose.orientation.z
+            current_left_pose.orientation.z,
         ])
         current_right_pos = current_right_pose.position
         current_right_quat_np = np.array([
             current_right_pose.orientation.w,
             current_right_pose.orientation.x,
             current_right_pose.orientation.y,
-            current_right_pose.orientation.z
+            current_right_pose.orientation.z,
         ])
-        
-        # Calculate number of waypoints
-        num_waypoints = int(self.interpolation_frequency // self.control_frequency)
-        if num_waypoints < 1:
-            num_waypoints = 1
-        
-        # Calculate number of physics steps per waypoint
-        steps_per_waypoint = int(self.low_level_frequency // self.interpolation_frequency)
-        if steps_per_waypoint < 1:
-            steps_per_waypoint = 1
-        
-        # Get model and data references
-        model = self._mojo.physics.model._model
-        data = self._mojo.physics.data._data
-        
-        # Interpolate targets and solve IK for each waypoint
-        for waypoint in range(num_waypoints):
-            # Calculate interpolation factor (0 to 1)
-            alpha = (waypoint + 1) / num_waypoints
-            
-            # Interpolate end-effector positions
-            interp_left_pos = (1 - alpha) * current_left_pos + alpha * left_pos
-            interp_right_pos = (1 - alpha) * current_right_pos + alpha * right_pos
-            
-            # Interpolate quaternions using SLERP (Spherical Linear Interpolation)
-            # Convert numpy arrays to Quaternion objects for SLERP
-            left_quat_current = Quaternion(current_left_quat_np)
-            left_quat_target = Quaternion(target_left_quat_np)
-            right_quat_current = Quaternion(current_right_quat_np)
-            right_quat_target = Quaternion(target_right_quat_np)
-            
-            # Perform SLERP interpolation
-            left_quat_interp = Quaternion.slerp(left_quat_current, left_quat_target, alpha)
-            right_quat_interp = Quaternion.slerp(right_quat_current, right_quat_target, alpha)
-            
-            # Convert back to numpy arrays in wxyz format
-            interp_left_quat = np.array([left_quat_interp.w, left_quat_interp.x, 
-                                         left_quat_interp.y, left_quat_interp.z])
-            interp_right_quat = np.array([right_quat_interp.w, right_quat_interp.x,
-                                          right_quat_interp.y, right_quat_interp.z])
-            
-            # Get current qpos for IK initialization
-            current_qpos = self._mojo.physics.data.qpos.copy()
-            
-            # Solve whole-body IK for interpolated targets
-            ik_solution, success, info = self._ik_solver.solve(
-                left_target_pos=interp_left_pos,
-                left_target_quat=interp_left_quat,
-                right_target_pos=interp_right_pos,
-                right_target_quat=interp_right_quat,
-                left_body_relative=False,  # Always use world frame
-                right_body_relative=False,  # Always use world frame
-                current_qpos=current_qpos,
-            )
 
-            if not success:
-                # IK failed for this waypoint, skip to next or continue with last solution
-                if waypoint == 0:
-                    # First waypoint failed, can't continue
-                    self._last_ik_info = info
-                    return
-                # Use last successful solution and continue
-                continue
-            
-            self._last_ik_solution = ik_solution
-            self._last_ik_info = info
-            
-            # Extract base position from IK solution for mocap target
-            base_x = ik_solution[0]
-            base_y = ik_solution[1]
-            # Extract rotation from quaternion (only Z rotation for wheeled base)
-            quat = ik_solution[3:7]  # [w, x, y, z]
-            # Convert quaternion to euler angles, extract Z rotation (yaw)
-            base_rz = np.arctan2(2*(quat[0]*quat[3] + quat[1]*quat[2]), 
-                                1 - 2*(quat[2]**2 + quat[3]**2))
-            
-            # Prepare target mocap quaternion for Z rotation
-            target_mocap_quat = np.array([np.cos(base_rz / 2), 0, 0, np.sin(base_rz / 2)])
-            
-            # Extract joint positions from IK solution
-            # Note: qpos structure for RBY1 is:
-            # [0:7] base, [7:11] wheels, [11:17] torso, [17:24] right arm, [24:32] right gripper, [32:39] left arm
-            torso_joints = ik_solution[11:17]  # Torso at indices 11-16
-            right_arm_joints = ik_solution[17:24]  # Right arm at indices 17-23
-            left_arm_joints = ik_solution[32:39]  # Left arm at indices 32-38
-            
-            # Target joint positions
-            joint_positions = np.concatenate([torso_joints, right_arm_joints, left_arm_joints])
-            
-            # Apply IK solution and step physics
+        ik_substep_stride = max(
+            1,
+            int(round(float(physics_frequency) / max(float(self.interpolation_frequency), 1.0))),
+        )
+
+        self._pending_step_state = {
+            "current_left_pos": current_left_pos,
+            "current_left_quat_np": current_left_quat_np,
+            "current_right_pos": current_right_pos,
+            "current_right_quat_np": current_right_quat_np,
+            "target_left_pos": left_pos,
+            "target_left_quat_np": target_left_quat_np,
+            "target_right_pos": right_pos,
+            "target_right_quat_np": target_right_quat_np,
+            "ik_substep_stride": ik_substep_stride,
+            "next_ik_substep": 0,
+            "physics_frequency": physics_frequency,
+            "desired_base_pos": None,
+            "desired_base_quat": None,
+            "desired_joint_positions": None,
+        }
+
+        if self._filtered_joint_positions is None:
+            filtered_joint_positions = []
+            for actuator in self._robot.limb_actuators:
+                actuator_bound = self._mojo.physics.bind(actuator)
+                filtered_joint_positions.append(float(np.asarray(actuator_bound.ctrl).reshape(-1)[0]))
+            self._filtered_joint_positions = np.asarray(filtered_joint_positions, dtype=np.float64)
+
+        if self._base_target_body_id >= 0:
+            model = self._mojo.physics.model._model
+            data = self._mojo.physics.data._data
             mocap_id = model.body_mocapid[self._base_target_body_id]
             if mocap_id >= 0:
-                # Set mocap position
-                data.mocap_pos[mocap_id][0] = base_x
-                data.mocap_pos[mocap_id][1] = base_y
-                data.mocap_pos[mocap_id][2] = 0.0  # Keep Z at ground level
-                data.mocap_quat[mocap_id] = target_mocap_quat
-            
-            if self.direct_mode:
-                # ===== DIRECT MODE: Set qpos directly =====
-                # Set base position
-                data.qpos[0] = base_x
-                data.qpos[1] = base_y
-                # data.qpos[2] is Z, keep as is (should be 0)
-                
-                # Set base quaternion
-                data.qpos[3:7] = ik_solution[3:7]
-                
-                # Set wheel joints
-                data.qpos[7:11] = ik_solution[7:11]
-                
-                # Set torso joints: qpos[11:17]
-                data.qpos[11:17] = torso_joints
-                # Set right arm joints: qpos[17:24]
-                data.qpos[17:24] = right_arm_joints
-                # Set left arm joints: qpos[32:39]
-                data.qpos[32:39] = left_arm_joints
-                
-                # ALSO set ctrl to prevent motor drift
-                for i, actuator in enumerate(self._robot.limb_actuators):
-                    actuator_bound = self._mojo.physics.bind(actuator)
-                    actuator_bound.ctrl = joint_positions[i]
-                
-                # Need to forward after direct qpos modification
-                mujoco.mj_forward(model, data)
-                
-            else:
-                # ===== STANDARD MODE: Set ctrl values =====
-                for i, actuator in enumerate(self._robot.limb_actuators):
-                    actuator_bound = self._mojo.physics.bind(actuator)
-                    actuator_bound.ctrl = joint_positions[i]
-            
-            if self.block_until_reached:
-                self._step_until_reached()
-            else:
-                # Step the simulation for this waypoint
-                for _ in range(steps_per_waypoint):
-                    self._mojo.step()
+                if self._filtered_mocap_pos is None:
+                    self._filtered_mocap_pos = np.array(data.mocap_pos[mocap_id], dtype=np.float64)
+                if self._filtered_mocap_quat is None:
+                    self._filtered_mocap_quat = np.array(data.mocap_quat[mocap_id], dtype=np.float64)
 
-        # Control grippers 
-        for side, action in zip(self._robot.grippers, gripper_action):
-            self._robot.grippers[side].set_control(action)
-        # Step 10 times to allow grippers to fully actuate
-        for _ in range(10):
-            self._mojo.step()
+    def apply_control_substep(
+        self,
+        substep_idx: int,
+        total_substeps: int,
+        physics_frequency: int,
+    ) -> None:
+        if self._pending_step_state is None:
+            raise RuntimeError("begin_control_step must be called before apply_control_substep.")
+
+        if self.block_until_reached:
+            if substep_idx == 0:
+                self._solve_and_apply_interpolated_target(alpha=1.0)
+            self._apply_filtered_command(delta_time=1.0 / float(max(physics_frequency, 1)))
+            return
+
+        pending = self._pending_step_state
+        if substep_idx < pending["next_ik_substep"]:
+            self._apply_filtered_command(delta_time=1.0 / float(max(physics_frequency, 1)))
+            return
+
+        stride = int(pending["ik_substep_stride"])
+        alpha_substep = min(total_substeps, substep_idx + stride)
+        alpha = float(alpha_substep) / float(max(total_substeps, 1))
+        self._solve_and_apply_interpolated_target(alpha=alpha)
+        pending["next_ik_substep"] = substep_idx + stride
+        self._apply_filtered_command(delta_time=1.0 / float(max(physics_frequency, 1)))
+
+    def end_control_step(self) -> None:
+        self._pending_step_state = None
+
+    def _solve_and_apply_interpolated_target(self, alpha: float) -> None:
+        pending = self._pending_step_state
+        if pending is None:
+            raise RuntimeError("Pending step state is missing.")
+
+        alpha = float(np.clip(alpha, 0.0, 1.0))
+        interp_left_pos = (
+            (1.0 - alpha) * pending["current_left_pos"] + alpha * pending["target_left_pos"]
+        )
+        interp_right_pos = (
+            (1.0 - alpha) * pending["current_right_pos"] + alpha * pending["target_right_pos"]
+        )
+
+        left_quat_current = Quaternion(pending["current_left_quat_np"])
+        left_quat_target = Quaternion(pending["target_left_quat_np"])
+        right_quat_current = Quaternion(pending["current_right_quat_np"])
+        right_quat_target = Quaternion(pending["target_right_quat_np"])
+        left_quat_interp = Quaternion.slerp(left_quat_current, left_quat_target, alpha)
+        right_quat_interp = Quaternion.slerp(right_quat_current, right_quat_target, alpha)
+        interp_left_quat = np.array(
+            [left_quat_interp.w, left_quat_interp.x, left_quat_interp.y, left_quat_interp.z]
+        )
+        interp_right_quat = np.array(
+            [right_quat_interp.w, right_quat_interp.x, right_quat_interp.y, right_quat_interp.z]
+        )
+
+        current_qpos = self._mojo.physics.data.qpos.copy()
+        ik_solution, success, info = self._ik_solver.solve(
+            left_target_pos=interp_left_pos,
+            left_target_quat=interp_left_quat,
+            right_target_pos=interp_right_pos,
+            right_target_quat=interp_right_quat,
+            left_body_relative=False,
+            right_body_relative=False,
+            current_qpos=current_qpos,
+        )
+        self._last_ik_info = info
+        if not success:
+            return
+
+        self._last_ik_solution = ik_solution
+        model = self._mojo.physics.model._model
+        data = self._mojo.physics.data._data
+
+        base_x = ik_solution[0]
+        base_y = ik_solution[1]
+        quat = ik_solution[3:7]
+        base_rz = np.arctan2(
+            2 * (quat[0] * quat[3] + quat[1] * quat[2]),
+            1 - 2 * (quat[2] ** 2 + quat[3] ** 2),
+        )
+        target_mocap_quat = np.array([np.cos(base_rz / 2), 0, 0, np.sin(base_rz / 2)])
+
+        torso_joints = ik_solution[11:17]
+        right_arm_joints = ik_solution[17:24]
+        left_arm_joints = ik_solution[32:39]
+        joint_positions = np.concatenate([torso_joints, right_arm_joints, left_arm_joints])
+
+        pending["desired_base_pos"] = np.array([base_x, base_y, 0.0], dtype=np.float64)
+        pending["desired_base_quat"] = np.array(target_mocap_quat, dtype=np.float64)
+        pending["desired_joint_positions"] = np.array(joint_positions, dtype=np.float64)
+
+        mocap_id = model.body_mocapid[self._base_target_body_id]
+
+        if self.direct_mode:
+            data.qpos[0] = base_x
+            data.qpos[1] = base_y
+            data.qpos[3:7] = ik_solution[3:7]
+            data.qpos[7:11] = ik_solution[7:11]
+            data.qpos[11:17] = torso_joints
+            data.qpos[17:24] = right_arm_joints
+            data.qpos[32:39] = left_arm_joints
+            for i, actuator in enumerate(self._robot.limb_actuators):
+                actuator_bound = self._mojo.physics.bind(actuator)
+                actuator_bound.ctrl = joint_positions[i]
+            mujoco.mj_forward(model, data)
+        else:
+            self._apply_filtered_command(
+                delta_time=1.0 / float(max(int(pending["physics_frequency"]), 1))
+            )
+
+    def _apply_filtered_command(self, delta_time: float) -> None:
+        pending = self._pending_step_state
+        if pending is None or self.direct_mode:
+            return
+
+        desired_joint_positions = pending.get("desired_joint_positions")
+        desired_base_pos = pending.get("desired_base_pos")
+        desired_base_quat = pending.get("desired_base_quat")
+        if desired_joint_positions is None:
+            return
+
+        alpha = 1.0
+        if self.low_pass_freq_hz > 0.0:
+            time_constant = 1.0 / (2.0 * np.pi * self.low_pass_freq_hz)
+            alpha = float(delta_time / (time_constant + delta_time))
+        alpha = float(np.clip(alpha, 0.0, 1.0))
+
+        if self._filtered_joint_positions is None:
+            self._filtered_joint_positions = np.array(desired_joint_positions, dtype=np.float64)
+        else:
+            self._filtered_joint_positions = (
+                alpha * desired_joint_positions
+                + (1.0 - alpha) * self._filtered_joint_positions
+            )
+
+        model = self._mojo.physics.model._model
+        data = self._mojo.physics.data._data
+        mocap_id = model.body_mocapid[self._base_target_body_id]
+        if mocap_id >= 0 and desired_base_pos is not None and desired_base_quat is not None:
+            if self._filtered_mocap_pos is None:
+                self._filtered_mocap_pos = np.array(desired_base_pos, dtype=np.float64)
+            else:
+                self._filtered_mocap_pos = (
+                    alpha * desired_base_pos + (1.0 - alpha) * self._filtered_mocap_pos
+                )
+            if self._filtered_mocap_quat is None:
+                self._filtered_mocap_quat = np.array(desired_base_quat, dtype=np.float64)
+            else:
+                current_quat = Quaternion(self._filtered_mocap_quat)
+                target_quat = Quaternion(desired_base_quat)
+                quat_interp = Quaternion.slerp(current_quat, target_quat, alpha)
+                self._filtered_mocap_quat = np.array(
+                    [quat_interp.w, quat_interp.x, quat_interp.y, quat_interp.z],
+                    dtype=np.float64,
+                )
+            data.mocap_pos[mocap_id] = self._filtered_mocap_pos
+            data.mocap_quat[mocap_id] = self._filtered_mocap_quat
+
+        for i, actuator in enumerate(self._robot.limb_actuators):
+            actuator_bound = self._mojo.physics.bind(actuator)
+            actuator_bound.ctrl = self._filtered_joint_positions[i]
         
     def reset(self, reset_state: np.ndarray):
         """Reset robot state.
@@ -424,6 +498,9 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
         """
         # Check if robot has limb actuators (may not be initialized yet)
         if hasattr(self._robot, 'limb_actuators') and self._robot.limb_actuators:
+            self._filtered_joint_positions = None
+            self._filtered_mocap_pos = None
+            self._filtered_mocap_quat = None
             # Reset actuators to given state
             if len(reset_state) != len(self._robot.limb_actuators):
                 raise ValueError(

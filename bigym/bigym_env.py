@@ -797,12 +797,31 @@ class BiGymEnv(gym.Env):
                 f"Overhead: {action - clipped_action}"
             )
         with self._env_health.track():
-            for i in range(self._sub_steps_count):
-                if i == 0:
-                    self.action_mode.step(action)
-                else:
-                    self._mojo.step()
-                mujoco.mj_rnePostConstraint(self._mojo.model, self._mojo.data)
+            physics_frequency = int(round(1.0 / PHYSICS_DT))
+            if getattr(self.action_mode, "uses_env_substep_schedule", False):
+                self.action_mode.begin_control_step(
+                    action,
+                    total_substeps=self._sub_steps_count,
+                    physics_frequency=physics_frequency,
+                )
+                try:
+                    for i in range(self._sub_steps_count):
+                        self.action_mode.apply_control_substep(
+                            i,
+                            total_substeps=self._sub_steps_count,
+                            physics_frequency=physics_frequency,
+                        )
+                        self._mojo.step()
+                        mujoco.mj_rnePostConstraint(self._mojo.model, self._mojo.data)
+                finally:
+                    self.action_mode.end_control_step()
+            else:
+                for i in range(self._sub_steps_count):
+                    if i == 0:
+                        self.action_mode.step(action)
+                    else:
+                        self._mojo.step()
+                    mujoco.mj_rnePostConstraint(self._mojo.model, self._mojo.data)
 
     def _success(self) -> bool:
         """Check if the episode is successful."""
