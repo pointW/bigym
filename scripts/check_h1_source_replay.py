@@ -7,6 +7,7 @@ import argparse
 import importlib
 import os
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Type
 
@@ -83,14 +84,14 @@ def get_environment_class(env_name: str) -> Type:
         "DishwasherUnloadPlatesLong": ("bigym.envs.dishwasher_plates", None),
         "FlipCup": ("bigym.envs.manipulation", None),
         "FlipCutlery": ("bigym.envs.manipulation", None),
-        "FlipSandwich": ("bigym.envs.manipulation", None),
+        "FlipSandwich": ("bigym.envs.pick_and_place", None),
         "StackBlocks": ("bigym.envs.manipulation", None),
         "ToastSandwich": ("bigym.envs.kitchen", None),
         "RemoveSandwich": ("bigym.envs.kitchen", None),
         "SaucepanToHob": ("bigym.envs.kitchen", None),
-        "StoreBox": ("bigym.envs.storage", None),
-        "PickBox": ("bigym.envs.storage", None),
-        "StoreKitchenware": ("bigym.envs.storage", None),
+        "StoreBox": ("bigym.envs.pick_and_place", None),
+        "PickBox": ("bigym.envs.pick_and_place", None),
+        "StoreKitchenware": ("bigym.envs.pick_and_place", None),
         "GroceriesStoreLower": ("bigym.envs.storage", None),
         "GroceriesStoreUpper": ("bigym.envs.storage", None),
         "TakeCups": ("bigym.envs.pick_and_place", None),
@@ -189,26 +190,24 @@ def load_step1_source_demos(env_name: str, control_frequency: int) -> tuple[type
     return env_class, original_demos
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--env", type=str, default="MoveTwoPlates")
-    parser.add_argument("--control-freq", type=int, default=20)
-    parser.add_argument("--disable-perturb", action="store_true")
-    args = parser.parse_args()
-
-    env_class, demos = load_step1_source_demos(args.env, args.control_freq)
-    demo0 = demos[0]
-    source_env_data = demo0.metadata.environment_data
+def replay_single_demo(
+    env_name: str,
+    control_frequency: int,
+    disable_perturb: bool,
+    demo: Demo,
+) -> tuple[int, bool, int, float]:
+    env_class = get_environment_class(env_name)
+    source_env_data = demo.metadata.environment_data
     floating_dofs = [PelvisDof(dof) for dof in source_env_data.floating_dofs]
     source_absolute = (
         True
         if source_env_data.action_mode_absolute is None
         else bool(source_env_data.action_mode_absolute)
     )
-    source_robot_cls = demo0.metadata.robot_cls
+    source_robot_cls = demo.metadata.robot_cls
 
     prev_bigym_disable_perturb = os.getenv("BIGYM_DISABLE_PERTURB")
-    if args.disable_perturb:
+    if disable_perturb:
         os.environ["BIGYM_DISABLE_PERTURB"] = "1"
     else:
         os.environ.pop("BIGYM_DISABLE_PERTURB", None)
@@ -219,42 +218,75 @@ def main() -> None:
             absolute=source_absolute,
             floating_dofs=floating_dofs,
         ),
-        control_frequency=args.control_freq,
+        control_frequency=control_frequency,
         observation_config=ObservationConfig(cameras=[]),
         render_mode=None,
         robot_cls=source_robot_cls,
     )
 
-    successes: list[tuple[int, int]] = []
-    failures: list[tuple[int, float]] = []
+    success = False
+    max_reward = 0.0
+    success_step = -1
     try:
-        for demo in demos:
-            env.reset(seed=demo.seed)
-            success = False
-            max_reward = 0.0
-            for step_idx, timestep in enumerate(demo.timesteps):
-                action = getattr(timestep, "executed_action", None)
-                if action is None:
-                    action = timestep.info.get("demo_action")
-                if action is None:
-                    continue
-                action = np.clip(action, env.action_space.low, env.action_space.high)
-                _, reward, terminated, truncated, info = env.step(action)
-                max_reward = max(max_reward, float(reward))
-                if info.get("task_success", False):
-                    success = True
-                    successes.append((int(demo.seed), step_idx + 1))
-                    break
-                if terminated or truncated:
-                    break
-            if not success:
-                failures.append((int(demo.seed), max_reward))
+        env.reset(seed=demo.seed)
+        for step_idx, timestep in enumerate(demo.timesteps):
+            action = getattr(timestep, "executed_action", None)
+            if action is None:
+                action = timestep.info.get("demo_action")
+            if action is None:
+                continue
+            action = np.clip(action, env.action_space.low, env.action_space.high)
+            _, reward, terminated, truncated, info = env.step(action)
+            max_reward = max(max_reward, float(reward))
+            if info.get("task_success", False):
+                success = True
+                success_step = step_idx + 1
+                break
+            if terminated or truncated:
+                break
     finally:
         env.close()
         if prev_bigym_disable_perturb is None:
             os.environ.pop("BIGYM_DISABLE_PERTURB", None)
         else:
             os.environ["BIGYM_DISABLE_PERTURB"] = prev_bigym_disable_perturb
+
+    return int(demo.seed), success, success_step, max_reward
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--env", type=str, default="MoveTwoPlates")
+    parser.add_argument("--control-freq", type=int, default=20)
+    parser.add_argument("--disable-perturb", action="store_true")
+    parser.add_argument("--processes", type=int, default=1)
+    args = parser.parse_args()
+
+    _, demos = load_step1_source_demos(args.env, args.control_freq)
+    successes: list[tuple[int, int]] = []
+    failures: list[tuple[int, float]] = []
+    if args.processes <= 1:
+        results = [
+            replay_single_demo(args.env, args.control_freq, args.disable_perturb, demo)
+            for demo in demos
+        ]
+    else:
+        with ProcessPoolExecutor(max_workers=args.processes) as executor:
+            results = list(
+                executor.map(
+                    replay_single_demo,
+                    [args.env] * len(demos),
+                    [args.control_freq] * len(demos),
+                    [args.disable_perturb] * len(demos),
+                    demos,
+                )
+            )
+
+    for seed, success, success_step, max_reward in results:
+        if success:
+            successes.append((seed, success_step))
+        else:
+            failures.append((seed, max_reward))
 
     mode = "no_perturb" if args.disable_perturb else "default"
     print(f"\nMODE {mode}")

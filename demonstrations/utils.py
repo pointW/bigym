@@ -50,6 +50,9 @@ class Metadata:
     environment_data: EnvData
     seed: int
     package_versions: dict[str, str]
+    reset_perturb_enabled: Optional[bool] = None
+    bigym_reset_perturb_enabled: Optional[bool] = None
+    rby1_reset_perturb_enabled: Optional[bool] = None
     date: str = field(
         default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).strftime(
             "%Y-%m-%d_%H-%M-%S"
@@ -124,7 +127,7 @@ class Metadata:
 
     def ready_for_safetensors(self) -> dict:
         """Prepare metadata for safetensors."""
-        return {
+        metadata = {
             "seed": json.dumps(self.seed),
             "observation_mode": json.dumps(self.observation_mode.value),
             "environment_data": json.dumps(asdict(self.environment_data)),
@@ -132,6 +135,19 @@ class Metadata:
             "date": json.dumps(self.date),
             "uuid": json.dumps(self.uuid),
         }
+        if self.reset_perturb_enabled is not None:
+            metadata["reset_perturb_enabled"] = json.dumps(
+                bool(self.reset_perturb_enabled)
+            )
+        if self.bigym_reset_perturb_enabled is not None:
+            metadata["bigym_reset_perturb_enabled"] = json.dumps(
+                bool(self.bigym_reset_perturb_enabled)
+            )
+        if self.rby1_reset_perturb_enabled is not None:
+            metadata["rby1_reset_perturb_enabled"] = json.dumps(
+                bool(self.rby1_reset_perturb_enabled)
+            )
+        return metadata
 
     @property
     def env_name(self) -> str:

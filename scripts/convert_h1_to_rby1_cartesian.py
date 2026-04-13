@@ -640,6 +640,9 @@ def convert_h1_demo_to_rby1_cartesian(
             last_info = info or {}
 
     rby1_metadata = Metadata.from_env(rby1_env)
+    rby1_metadata.reset_perturb_enabled = bool(enable_perturb)
+    rby1_metadata.bigym_reset_perturb_enabled = bool(enable_perturb)
+    rby1_metadata.rby1_reset_perturb_enabled = bool(enable_perturb)
     rby1_metadata.seed = original_demo.seed
     success = bool(last_info.get("task_success", False)) if last_info else bool(rby1_env.success)
     rby1_env.close()
