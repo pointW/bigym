@@ -1,5 +1,7 @@
 """Pick and place tasks."""
 
+import os
+
 import numpy as np
 from pyquaternion import Quaternion
 
@@ -12,6 +14,12 @@ from bigym.envs.props.prop import Prop
 from bigym.envs.props.kitchenware import Mug, Saucepan, Pan, ChoppingBoard
 from bigym.robots.configs.h1 import H1FineManipulation
 from bigym.utils.env_utils import get_random_points_on_plane
+
+
+def _bigym_perturb_enabled() -> bool:
+    """Return True if task reset perturbation is enabled."""
+    value = os.getenv("BIGYM_DISABLE_PERTURB", "0").strip().lower()
+    return value not in {"1", "true", "yes", "on"}
 
 
 class PutCups(BiGymEnv):
@@ -164,10 +172,30 @@ class StoreKitchenware(BiGymEnv):
     _ITEMS_QUAT = Quaternion(axis=[0, 0, 1], degrees=15)
     _ITEMS_POS_BOUNDS = np.array([0.02, 0.02, 0])
     _ITEMS_ROT_BOUNDS = np.deg2rad([0, 0, 30])
+    _CABINET_Z_BOUNDS = np.array([-0.1, 0.1])
+    _CABINET_YAW_BOUNDS = np.deg2rad(30)
+    _SHELF_Z_DELTA_BOUNDS = np.array([-0.10, 0.04])
 
     def _initialize_env(self):
         self.cabinet_base = self._preset.get_props(BaseCabinet)[0]
         self.items: list[Prop] = [item(self._mojo) for item in self._ITEMS]
+        self._cabinet_base_pos = self.cabinet_base.body.get_position().copy()
+        self._cabinet_base_quat = self.cabinet_base.body.get_quaternion().copy()
+        base_rot = Quaternion(self._cabinet_base_quat).rotation_matrix
+        self._item_site_local_positions = []
+        for site in [self.cabinet_base.sites[0], self.cabinet_base.sites[2]]:
+            local_pos = base_rot.T @ (site.get_position() - self._cabinet_base_pos)
+            self._item_site_local_positions.append(local_pos)
+        self._shelf_local_pos = np.array(
+            self.cabinet_base.shelf_body.mjcf.pos,
+            dtype=np.float64,
+        ).copy()
+        # Preserve the original "world yaw = 15 deg" spawn orientation, but
+        # express it in the cabinet's local frame so it stays semantically
+        # identical when the cabinet itself is yaw-perturbed.
+        self._item_nominal_local_quat = (
+            Quaternion(self._cabinet_base_quat).inverse * self._ITEMS_QUAT
+        )
 
     def _success(self) -> bool:
         for item in self.items:
@@ -179,15 +207,56 @@ class StoreKitchenware(BiGymEnv):
         return True
 
     def _on_reset(self):
-        sites = [self.cabinet_base.sites[0], self.cabinet_base.sites[2]]
-        np.random.shuffle(sites)
-        for item, site in zip(self.items, sites):
-            item.set_pose(
-                site.get_position(),
-                self._ITEMS_QUAT.elements,
-                self._ITEMS_POS_BOUNDS,
-                self._ITEMS_ROT_BOUNDS,
+        perturb_enabled = _bigym_perturb_enabled()
+
+        cabinet_pos = self._cabinet_base_pos.copy()
+        cabinet_quat = self._cabinet_base_quat.copy()
+        shelf_local_pos = self._shelf_local_pos.copy()
+
+        if perturb_enabled:
+            cabinet_pos[2] += np.random.uniform(*self._CABINET_Z_BOUNDS)
+            yaw_offset = np.random.uniform(
+                -self._CABINET_YAW_BOUNDS,
+                self._CABINET_YAW_BOUNDS,
             )
+            cabinet_quat = (
+                Quaternion(axis=[0, 0, 1], angle=yaw_offset)
+                * Quaternion(self._cabinet_base_quat)
+            ).elements
+            shelf_local_pos[2] += np.random.uniform(*self._SHELF_Z_DELTA_BOUNDS)
+
+        self.cabinet_base.body.set_position(cabinet_pos, True)
+        self.cabinet_base.body.set_quaternion(cabinet_quat, True)
+        self.cabinet_base.shelf_body.set_position(shelf_local_pos, True)
+
+        rot = Quaternion(cabinet_quat).rotation_matrix
+        site_local_positions = [pos.copy() for pos in self._item_site_local_positions]
+        np.random.shuffle(site_local_positions)
+        for item, local_pos in zip(self.items, site_local_positions):
+            item_quat = (
+                Quaternion(cabinet_quat) * self._item_nominal_local_quat
+            ).elements
+            if perturb_enabled:
+                local_spawn = local_pos.copy()
+                local_spawn += np.random.uniform(
+                    -self._ITEMS_POS_BOUNDS,
+                    self._ITEMS_POS_BOUNDS,
+                )
+                spawn_pos = cabinet_pos + rot @ local_spawn
+                item.set_pose(
+                    spawn_pos,
+                    item_quat,
+                    np.zeros(3),
+                    self._ITEMS_ROT_BOUNDS,
+                )
+            else:
+                spawn_pos = cabinet_pos + rot @ local_pos
+                item.set_pose(
+                    spawn_pos,
+                    item_quat,
+                    self._ITEMS_POS_BOUNDS,
+                    self._ITEMS_ROT_BOUNDS,
+                )
 
 
 class ToastSandwich(BiGymEnv):

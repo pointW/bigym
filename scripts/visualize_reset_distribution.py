@@ -19,6 +19,7 @@ ENV_MODULES = {
     "StackBlocks": "bigym.envs.manipulation",
     "MovePlate": "bigym.envs.move_plates",
     "MoveTwoPlates": "bigym.envs.move_plates",
+    "StoreKitchenware": "bigym.envs.pick_and_place",
 }
 
 
@@ -67,6 +68,62 @@ def _to_rgb_frame(frame):
     if img.dtype != np.uint8:
         img = np.clip(img, 0, 255).astype(np.uint8)
     return img
+
+
+def _capture_camera_state(cam):
+    return {
+        "lookat": [float(cam.lookat[i]) for i in range(3)],
+        "distance": float(cam.distance),
+        "azimuth": float(cam.azimuth),
+        "elevation": float(cam.elevation),
+    }
+
+
+def _apply_camera_overrides(cam, base_state, args: argparse.Namespace):
+    for i, delta in enumerate(
+        (args.camera_lookat_dx, args.camera_lookat_dy, args.camera_lookat_dz)
+    ):
+        cam.lookat[i] = base_state["lookat"][i] + float(delta)
+    cam.distance = base_state["distance"] + float(args.camera_distance_delta)
+    cam.azimuth = (
+        base_state["azimuth"] + float(args.camera_azimuth_delta)
+        if args.camera_azimuth is None
+        else float(args.camera_azimuth)
+    )
+    cam.elevation = (
+        base_state["elevation"] + float(args.camera_elevation_delta)
+        if args.camera_elevation is None
+        else float(args.camera_elevation)
+    )
+
+
+def _maybe_prepare_camera(env, render_mode: str, args: argparse.Namespace, base_state):
+    if render_mode is None:
+        return base_state
+
+    needs_override = any(
+        value != 0.0
+        for value in (
+            args.camera_lookat_dx,
+            args.camera_lookat_dy,
+            args.camera_lookat_dz,
+            args.camera_distance_delta,
+            args.camera_azimuth_delta,
+            args.camera_elevation_delta,
+        )
+    ) or args.camera_azimuth is not None or args.camera_elevation is not None
+    if not needs_override:
+        return base_state
+
+    # Lazily initialize the viewer and cache its default free-camera pose.
+    if base_state is None:
+        env.render()
+        viewer = env.mujoco_renderer.get_viewer(render_mode)
+        base_state = _capture_camera_state(viewer.cam)
+        print(f"[reset-viz] base camera: {base_state}")
+    viewer = env.mujoco_renderer.get_viewer(render_mode)
+    _apply_camera_overrides(viewer.cam, base_state, args)
+    return base_state
 
 
 def parse_args() -> argparse.Namespace:
@@ -145,6 +202,54 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="GIF loop count: 0 means infinite (default: 0).",
     )
+    parser.add_argument(
+        "--camera-lookat-dx",
+        type=float,
+        default=0.0,
+        help="Additive x offset for the free camera lookat point.",
+    )
+    parser.add_argument(
+        "--camera-lookat-dy",
+        type=float,
+        default=0.0,
+        help="Additive y offset for the free camera lookat point.",
+    )
+    parser.add_argument(
+        "--camera-lookat-dz",
+        type=float,
+        default=0.0,
+        help="Additive z offset for the free camera lookat point.",
+    )
+    parser.add_argument(
+        "--camera-distance-delta",
+        type=float,
+        default=0.0,
+        help="Additive offset for free camera distance.",
+    )
+    parser.add_argument(
+        "--camera-azimuth-delta",
+        type=float,
+        default=0.0,
+        help="Additive offset for free camera azimuth in degrees.",
+    )
+    parser.add_argument(
+        "--camera-elevation-delta",
+        type=float,
+        default=0.0,
+        help="Additive offset for free camera elevation in degrees.",
+    )
+    parser.add_argument(
+        "--camera-azimuth",
+        type=float,
+        default=None,
+        help="Absolute free camera azimuth in degrees. Overrides delta if set.",
+    )
+    parser.add_argument(
+        "--camera-elevation",
+        type=float,
+        default=None,
+        help="Absolute free camera elevation in degrees. Overrides delta if set.",
+    )
     return parser.parse_args()
 
 
@@ -178,6 +283,7 @@ def main():
     )
 
     reset_idx = 0
+    camera_base_state = None
     try:
         if save_gif:
             import imageio.v2 as imageio
@@ -187,6 +293,12 @@ def main():
             for frame_idx in range(num_frames):
                 seed = None if args.seed_base is None else args.seed_base + frame_idx
                 env.reset(seed=seed)
+                camera_base_state = _maybe_prepare_camera(
+                    env=env,
+                    render_mode=render_mode,
+                    args=args,
+                    base_state=camera_base_state,
+                )
                 frame = env.render()
                 frames.append(_to_rgb_frame(frame))
                 print(f"[reset-viz] gif frame {frame_idx + 1}/{num_frames} seed={seed}")
@@ -207,6 +319,12 @@ def main():
             while args.num_resets <= 0 or reset_idx < args.num_resets:
                 seed = None if args.seed_base is None else args.seed_base + reset_idx
                 env.reset(seed=seed)
+                camera_base_state = _maybe_prepare_camera(
+                    env=env,
+                    render_mode=render_mode,
+                    args=args,
+                    base_state=camera_base_state,
+                )
                 reset_idx += 1
                 print(f"[reset-viz] reset #{reset_idx} seed={seed}")
 

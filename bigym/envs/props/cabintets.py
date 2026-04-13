@@ -82,8 +82,10 @@ class BaseCabinet(ModularCabinet):
 
     def _on_loaded(self, model: mjcf.RootElement):
         cabinet = MujocoElement(self._mojo, model)
-        self.shelf = Body.get(self._mojo, self._SHELF, cabinet).geoms[-1]
-        self.shelf_bottom = Body.get(self._mojo, self._SHELF_BOTTOM, cabinet).geoms[-1]
+        self.shelf_body = Body.get(self._mojo, self._SHELF, cabinet)
+        self.shelf_bottom_body = Body.get(self._mojo, self._SHELF_BOTTOM, cabinet)
+        self.shelf = self.shelf_body.geoms[-1]
+        self.shelf_bottom = self.shelf_bottom_body.geoms[-1]
         self.counter = Body.get(self._mojo, self._COUNTER, cabinet).geoms[-1]
         self.hob = Body.get(self._mojo, self._HOB, cabinet).geoms[-1]
 
