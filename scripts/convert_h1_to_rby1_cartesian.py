@@ -399,8 +399,6 @@ def convert_h1_demo_to_rby1_cartesian(
     robot_type: str = "rby1",
     blend_steps: int = 0,
     blend_ori_steps: Optional[int] = None,
-    perturb_seed: Optional[int] = None,
-    enable_perturb: bool = False,
     with_pointcloud: bool = True,
     pcd_points: int = 1024,
     pcd_min_dist: Optional[float] = None,
@@ -422,9 +420,6 @@ def convert_h1_demo_to_rby1_cartesian(
         robot_type: Target robot type (should be "rby1")
         blend_steps: Number of initial steps to blend from perturbed pose
         blend_ori_steps: Steps to blend orientation (defaults to blend_steps)
-        perturb_seed: Optional seed for RBY1 EE perturbation
-        enable_perturb: If True, enable RBY1 and task reset perturbation
-            (default disabled)
         with_pointcloud: If True, generate point clouds from depth + rgb
         pcd_points: Number of points to sample per camera
         pcd_min_dist: Minimum camera distance (meters) to keep points
@@ -479,21 +474,9 @@ def convert_h1_demo_to_rby1_cartesian(
         observation_config=ObservationConfig(cameras=[]),
         render_mode=render_mode,
         robot_cls=source_robot_cls,
+        init_perturb=False,
     )
-    
-    prev_bigym_disable_perturb = os.getenv("BIGYM_DISABLE_PERTURB")
-    if enable_perturb:
-        os.environ.pop("BIGYM_DISABLE_PERTURB", None)
-    else:
-        os.environ["BIGYM_DISABLE_PERTURB"] = "1"
-    try:
-        # Reset with original seed
-        h1_env.reset(seed=original_demo.seed)
-    finally:
-        if prev_bigym_disable_perturb is None:
-            os.environ.pop("BIGYM_DISABLE_PERTURB", None)
-        else:
-            os.environ["BIGYM_DISABLE_PERTURB"] = prev_bigym_disable_perturb
+    h1_env.reset(seed=original_demo.seed)
     
     # Get floating base DOF count for H1
     floating_base_dof = (
@@ -551,40 +534,10 @@ def convert_h1_demo_to_rby1_cartesian(
         observation_config=ObservationConfig(cameras=camera_configs),
         render_mode=render_mode,
         robot_cls=RBY1,
+        init_perturb=False,
     )
-    
-    prev_disable_perturb = os.getenv("RBY1_DISABLE_PERTURB")
-    if enable_perturb:
-        os.environ.pop("RBY1_DISABLE_PERTURB", None)
-    else:
-        os.environ["RBY1_DISABLE_PERTURB"] = "1"
-    prev_bigym_disable_perturb = os.getenv("BIGYM_DISABLE_PERTURB")
-    if enable_perturb:
-        os.environ.pop("BIGYM_DISABLE_PERTURB", None)
-    else:
-        os.environ["BIGYM_DISABLE_PERTURB"] = "1"
 
-    prev_perturb_seed = os.getenv("RBY1_PERTURB_SEED")
-    if perturb_seed is None:
-        os.environ.pop("RBY1_PERTURB_SEED", None)
-    else:
-        os.environ["RBY1_PERTURB_SEED"] = str(int(perturb_seed))
-
-    try:
-        rby1_obs, _ = rby1_env.reset(seed=original_demo.seed)
-    finally:
-        if prev_perturb_seed is None:
-            os.environ.pop("RBY1_PERTURB_SEED", None)
-        else:
-            os.environ["RBY1_PERTURB_SEED"] = prev_perturb_seed
-        if prev_disable_perturb is None:
-            os.environ.pop("RBY1_DISABLE_PERTURB", None)
-        else:
-            os.environ["RBY1_DISABLE_PERTURB"] = prev_disable_perturb
-        if prev_bigym_disable_perturb is None:
-            os.environ.pop("BIGYM_DISABLE_PERTURB", None)
-        else:
-            os.environ["BIGYM_DISABLE_PERTURB"] = prev_bigym_disable_perturb
+    rby1_obs, _ = rby1_env.reset(seed=original_demo.seed)
 
     timesteps: list[DemoStep] = []
     last_info: Dict[str, Any] = {}
@@ -640,9 +593,7 @@ def convert_h1_demo_to_rby1_cartesian(
             last_info = info or {}
 
     rby1_metadata = Metadata.from_env(rby1_env)
-    rby1_metadata.reset_perturb_enabled = bool(enable_perturb)
-    rby1_metadata.bigym_reset_perturb_enabled = bool(enable_perturb)
-    rby1_metadata.rby1_reset_perturb_enabled = bool(enable_perturb)
+    rby1_metadata.init_perturb_enabled = False
     rby1_metadata.seed = original_demo.seed
     success = bool(last_info.get("task_success", False)) if last_info else bool(rby1_env.success)
     rby1_env.close()
@@ -687,8 +638,6 @@ def _convert_demo_worker(
         robot_type,
         blend_steps,
         blend_ori_steps,
-        perturb_seed,
-        enable_perturb,
         with_pointcloud,
         pcd_points,
         pcd_min_dist,
@@ -710,8 +659,6 @@ def _convert_demo_worker(
             robot_type,
             blend_steps=blend_steps,
             blend_ori_steps=blend_ori_steps,
-            perturb_seed=perturb_seed,
-            enable_perturb=enable_perturb,
             with_pointcloud=with_pointcloud,
             pcd_points=pcd_points,
             pcd_min_dist=pcd_min_dist,
@@ -740,11 +687,8 @@ def convert_h1_demos_batch(
     processes: int = 1,
     source_seed: Optional[int] = None,
     perturb_variants: int = 1,
-    perturb_seed_base: Optional[int] = None,
-    perturb_seed_step: int = 1,
     save_videos: bool = False,
     video_dir: Optional[str] = None,
-    enable_perturb: bool = False,
     with_pointcloud: bool = True,
     pcd_points: int = 1024,
     pcd_min_dist: Optional[float] = None,
@@ -769,12 +713,8 @@ def convert_h1_demos_batch(
         blend_ori_steps: Steps to blend orientation (defaults to blend_steps)
         source_seed: Seed of the source demo to convert (optional)
         perturb_variants: Number of perturbation variants to generate per source demo
-        perturb_seed_base: Base seed for perturbation variants
-        perturb_seed_step: Step size between perturbation seeds
         save_videos: Whether to save RGB videos for converted demos
         video_dir: Directory to store videos (defaults to output_dir/videos)
-        enable_perturb: If True, enable RBY1 and task reset perturbation
-            (default disabled)
         with_pointcloud: If True, generate point clouds from depth + rgb
         pcd_points: Number of points to sample per camera
         pcd_min_dist: Minimum camera distance (meters) to keep points
@@ -915,11 +855,7 @@ def convert_h1_demos_batch(
     payloads = []
     for original_demo in original_demos:
         variants = max(1, int(perturb_variants))
-        base_seed = perturb_seed_base if perturb_seed_base is not None else original_demo.seed
-        for variant_idx in range(variants):
-            perturb_seed = None
-            if variants > 1 or perturb_seed_base is not None:
-                perturb_seed = base_seed + variant_idx * perturb_seed_step
+        for _variant_idx in range(variants):
             payloads.append(
                 (
                     len(payloads),
@@ -933,8 +869,6 @@ def convert_h1_demos_batch(
                     robot_type,
                     blend_steps,
                     blend_ori_steps,
-                    perturb_seed,
-                    enable_perturb,
                     with_pointcloud,
                     pcd_points,
                     pcd_min_dist,
@@ -992,8 +926,6 @@ def convert_h1_demos_batch(
                 _,
                 _,
                 _,
-                perturb_seed,
-                enable_perturb,
                 with_pointcloud,
                 pcd_points,
                 pcd_min_dist,
@@ -1014,8 +946,6 @@ def convert_h1_demos_batch(
                     robot_type,
                     blend_steps=blend_steps,
                     blend_ori_steps=blend_ori_steps,
-                    perturb_seed=perturb_seed,
-                    enable_perturb=enable_perturb,
                     with_pointcloud=with_pointcloud,
                     pcd_points=pcd_points,
                     pcd_min_dist=pcd_min_dist,
@@ -1150,23 +1080,6 @@ def main():
         help="Number of perturbation variants per source demo"
     )
     parser.add_argument(
-        "--perturb-seed-base",
-        type=int,
-        default=None,
-        help="Base seed for perturbation variants (defaults to demo seed)"
-    )
-    parser.add_argument(
-        "--perturb-seed-step",
-        type=int,
-        default=1,
-        help="Step between perturbation seeds"
-    )
-    parser.add_argument(
-        "--enable-perturb",
-        action="store_true",
-        help="Enable RBY1 and task reset perturbation (default: disabled)"
-    )
-    parser.add_argument(
         "--save-videos",
         action="store_true",
         help="Save RGB videos for each converted demo"
@@ -1236,11 +1149,8 @@ def main():
         processes=args.processes,
         source_seed=args.source_seed,
         perturb_variants=args.perturb_variants,
-        perturb_seed_base=args.perturb_seed_base,
-        perturb_seed_step=args.perturb_seed_step,
         save_videos=args.save_videos,
         video_dir=args.video_dir,
-        enable_perturb=args.enable_perturb,
         with_pointcloud=not args.no_pointcloud,
         pcd_points=args.pcd_points,
         pcd_min_dist=args.pcd_min_dist,

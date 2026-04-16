@@ -1,6 +1,5 @@
 """Load/unload cups to/from dishwasher."""
 from abc import ABC
-import os
 
 import numpy as np
 from pyquaternion import Quaternion
@@ -12,14 +11,6 @@ from bigym.envs.props.dishwasher import Dishwasher
 from bigym.envs.props.kitchenware import Mug
 from bigym.utils.env_utils import get_random_sites
 from bigym.utils.observation_config import ObservationConfig
-
-
-def _bigym_perturb_enabled() -> bool:
-    """Return True if task reset perturbation is enabled."""
-    value = os.getenv("BIGYM_DISABLE_PERTURB", "0").strip().lower()
-    return value not in {"1", "true", "yes", "on"}
-
-
 class _DishwasherCupsEnv(BiGymEnv, ABC):
     """Base cups environment."""
 
@@ -95,38 +86,14 @@ class DishwasherUnloadCupsLong(DishwasherUnloadCups):
     _WALL_CABINET_YAW_RANGE = (0.0, np.pi)
     _TOLERANCE = 0.1
 
-    def __init__(
-        self,
-        action_mode,
-        observation_config: ObservationConfig = ObservationConfig(),
-        render_mode=None,
-        start_seed=None,
-        control_frequency: int = CONTROL_FREQUENCY_MAX,
-        robot_cls=None,
-        robot_kwargs=None,
-        reset_warmup_steps=None,
-    ):
-        resolved_robot_cls = robot_cls or self.DEFAULT_ROBOT
-        if robot_kwargs is None and getattr(resolved_robot_cls, "__name__", None) in {
-            "RBY1",
-            "RBY1FineManipulation",
-        }:
-            robot_kwargs = {
-                "base_perturb_x_range": (-0.5, 0.0),
-                "base_perturb_y_range": (-0.5, 0.0),
-                "base_perturb_yaw_range": (0.0, np.deg2rad(90.0)),
-            }
-
-        super().__init__(
-            action_mode=action_mode,
-            observation_config=observation_config,
-            render_mode=render_mode,
-            start_seed=start_seed,
-            control_frequency=control_frequency,
-            robot_cls=robot_cls,
-            robot_kwargs=robot_kwargs,
-            reset_warmup_steps=reset_warmup_steps,
-        )
+    def _default_robot_init_overrides(self, robot_cls):
+        if getattr(robot_cls, "__name__", None) not in {"RBY1", "RBY1FineManipulation"}:
+            return super()._default_robot_init_overrides(robot_cls)
+        return {
+            "base_perturb_x_range": (-0.5, 0.0),
+            "base_perturb_y_range": (-0.5, 0.0),
+            "base_perturb_yaw_range": (0.0, np.deg2rad(90.0)),
+        }
 
     def _initialize_env(self):
         super()._initialize_env()
@@ -190,7 +157,7 @@ class DishwasherUnloadCupsLong(DishwasherUnloadCups):
         return np.random.choice(candidates, size=len(self.cups), replace=False).tolist()
 
     def _on_reset(self):
-        if not _bigym_perturb_enabled():
+        if not self.init_perturb_enabled():
             self._set_countertop_pose(z_offset=0.0, yaw_offset=0.0)
             self._set_wall_cabinet_pose(z_offset=0.0, yaw_offset=0.0)
         else:

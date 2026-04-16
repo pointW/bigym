@@ -1,6 +1,5 @@
 """Dishwasher interaction tasks."""
 from abc import ABC
-import os
 
 import numpy as np
 from pyquaternion import Quaternion
@@ -9,14 +8,6 @@ from bigym.bigym_env import BiGymEnv, CONTROL_FREQUENCY_MAX
 from bigym.const import PRESETS_PATH
 from bigym.envs.props.dishwasher import Dishwasher
 from bigym.utils.observation_config import ObservationConfig
-
-
-def _bigym_perturb_enabled() -> bool:
-    """Return True if task reset perturbation is enabled."""
-    value = os.getenv("BIGYM_DISABLE_PERTURB", "0").strip().lower()
-    return value not in {"1", "true", "yes", "on"}
-
-
 class _DishwasherEnv(BiGymEnv, ABC):
     """Base dishwasher environment."""
 
@@ -87,42 +78,20 @@ class DishwasherOpen(_DishwasherEnv):
 class DishwasherClose(_DishwasherEnv):
     """Push back all trays and close the door of the dishwasher."""
 
-    def __init__(
-        self,
-        action_mode,
-        observation_config: ObservationConfig = ObservationConfig(),
-        render_mode=None,
-        start_seed=None,
-        control_frequency: int = CONTROL_FREQUENCY_MAX,
-        robot_cls=None,
-        robot_kwargs=None,
-    ):
-        resolved_robot_cls = robot_cls or self.DEFAULT_ROBOT
-        if robot_kwargs is None and getattr(resolved_robot_cls, "__name__", None) in {
-            "RBY1",
-            "RBY1FineManipulation",
-        }:
-            robot_kwargs = {
-                "base_perturb_x_range": (-0.2, 0.0),
-                "base_perturb_y_range": (-0.2, 0.0),
-                "base_perturb_yaw_range": (0.0, np.deg2rad(45.0)),
-            }
-
-        super().__init__(
-            action_mode=action_mode,
-            observation_config=observation_config,
-            render_mode=render_mode,
-            start_seed=start_seed,
-            control_frequency=control_frequency,
-            robot_cls=robot_cls,
-            robot_kwargs=robot_kwargs,
-        )
+    def _default_robot_init_overrides(self, robot_cls):
+        if getattr(robot_cls, "__name__", None) not in {"RBY1", "RBY1FineManipulation"}:
+            return super()._default_robot_init_overrides(robot_cls)
+        return {
+            "base_perturb_x_range": (-0.2, 0.0),
+            "base_perturb_y_range": (-0.2, 0.0),
+            "base_perturb_yaw_range": (0.0, np.deg2rad(45.0)),
+        }
 
     def _success(self) -> bool:
         return np.allclose(self.dishwasher.get_state(), 0, atol=self._TOLERANCE)
 
     def _on_reset(self):
-        if not _bigym_perturb_enabled():
+        if not self.init_perturb_enabled():
             self.dishwasher.body.set_position(self._dishwasher_base_pos, True)
             self.dishwasher.body.set_quaternion(self._dishwasher_base_quat, True)
             self.dishwasher.set_state(door=1, bottom_tray=1, middle_tray=1)

@@ -45,10 +45,12 @@ class Robot(ABC):
         self,
         action_mode: ActionMode,
         mojo: Optional[Mojo] = None,
+        init_perturb: bool = False,
     ):
         """Init."""
         self._action_mode = action_mode
         self._mojo = mojo or Mojo(WORLD_MODEL)
+        self._init_perturb = bool(init_perturb)
         self._body = self._mojo.load_model(
             str(self.config.model), on_loaded=self._on_loaded
         )

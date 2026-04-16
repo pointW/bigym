@@ -1,7 +1,5 @@
 """Pick and place tasks."""
 
-import os
-
 import numpy as np
 from pyquaternion import Quaternion
 
@@ -14,12 +12,10 @@ from bigym.envs.props.prop import Prop
 from bigym.envs.props.kitchenware import Mug, Saucepan, Pan, ChoppingBoard
 from bigym.robots.configs.h1 import H1FineManipulation
 from bigym.utils.env_utils import get_random_points_on_plane
-
-
-def _bigym_perturb_enabled() -> bool:
-    """Return True if task reset perturbation is enabled."""
-    value = os.getenv("BIGYM_DISABLE_PERTURB", "0").strip().lower()
-    return value not in {"1", "true", "yes", "on"}
+def _quat_yaw(quat) -> float:
+    quat = Quaternion(quat)
+    rot = quat.rotation_matrix
+    return float(np.arctan2(rot[1, 0], rot[0, 0]))
 
 
 class PutCups(BiGymEnv):
@@ -207,7 +203,7 @@ class StoreKitchenware(BiGymEnv):
         return True
 
     def _on_reset(self):
-        perturb_enabled = _bigym_perturb_enabled()
+        perturb_enabled = self.init_perturb_enabled()
 
         cabinet_pos = self._cabinet_base_pos.copy()
         cabinet_quat = self._cabinet_base_quat.copy()
@@ -282,7 +278,7 @@ class ToastSandwich(BiGymEnv):
 
     _SANDWICH_OFFSET = np.array([0, 0, 0.05])
     _SANDWICH_POS_BOUNDS = np.array([0.05, 0.05, 0])
-    _SANDWICH_ROT_BOUNDS = np.deg2rad([0, 0, 180])
+    _SANDWICH_ROT_BOUNDS = np.deg2rad([0, 0, 45])
 
     @property
     def _sandwich_anchor(self) -> Prop:
@@ -341,15 +337,60 @@ class ToastSandwich(BiGymEnv):
 class FlipSandwich(ToastSandwich):
     """Flip sandwich using spatula."""
 
+    _PAN_QUAT_PERTURB = Quaternion(axis=[0, 0, 1], degrees=-100)
+    _PAN_ROT_BOUNDS_PERTURB = np.deg2rad([0, 0, 15])
     _SANDWICH_OFFSET = np.array([0, 0, 0.04])
     _SANDWICH_POS_BOUNDS = np.array([0.01, 0.01, 0])
-    _SANDWICH_ROT_BOUNDS = np.deg2rad([0, 0, 180])
+    _SANDWICH_REL_YAW_RANGE_PERTURB = np.deg2rad([0, 20])
+    _SANDWICH_ROT_BOUNDS_NO_PERTURB = np.deg2rad([0, 0, 180])
 
     _ROUNDED = True
 
     @property
     def _sandwich_anchor(self) -> Prop:
         return self.pan
+
+    def _on_reset(self):
+        perturb_enabled = self.init_perturb_enabled()
+        site = self.cabinet_base.sites[0]
+        self.pan.set_pose(
+            site.get_position(),
+            (
+                self._PAN_QUAT_PERTURB.elements
+                if perturb_enabled
+                else self._PAN_QUAT.elements
+            ),
+            self._PAN_POS_BOUNDS,
+            (
+                self._PAN_ROT_BOUNDS_PERTURB
+                if perturb_enabled
+                else self._PAN_ROT_BOUNDS
+            ),
+        )
+        self.spatula.set_pose(
+            self.pan.body.get_position() + self._SPATULA_OFFSET,
+            self._SPATULA_QUAT.elements,
+        )
+        self.board.set_pose(self._BOARD_POS, rotation_bounds=self._BOARD_ROT_BOUNDS)
+        if perturb_enabled:
+            pan_yaw = _quat_yaw(self.pan.body.get_quaternion())
+            sandwich_rel_yaw = np.random.uniform(
+                self._SANDWICH_REL_YAW_RANGE_PERTURB[0],
+                self._SANDWICH_REL_YAW_RANGE_PERTURB[1],
+            )
+            sandwich_quat = Quaternion(axis=[0, 0, 1], angle=pan_yaw + sandwich_rel_yaw)
+            self.sandwich.set_pose(
+                self._sandwich_anchor.body.get_position() + self._SANDWICH_OFFSET,
+                quat=sandwich_quat.elements,
+                position_bounds=self._SANDWICH_POS_BOUNDS,
+                rotation_bounds=np.zeros(3),
+            )
+        else:
+            self.sandwich.set_pose(
+                self._sandwich_anchor.body.get_position() + self._SANDWICH_OFFSET,
+                position_bounds=self._SANDWICH_POS_BOUNDS,
+                rotation_bounds=self._SANDWICH_ROT_BOUNDS_NO_PERTURB,
+            )
 
     def _success(self) -> bool:
         up = np.array([0, 0, 1])

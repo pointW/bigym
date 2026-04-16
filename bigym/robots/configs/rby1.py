@@ -1,6 +1,5 @@
 """RBY1 Robot Configuration."""
 import logging
-import os
 import mujoco
 import numpy as np
 from mojo.elements.consts import JointType
@@ -226,24 +225,10 @@ def _small_random_quat(
     return np.array([np.cos(half), *(axis * sin_half)], dtype=np.float64)
 
 
-def _rby1_perturb_enabled() -> bool:
-    """Return True if RBY1 init perturbation is enabled."""
-    value = os.getenv("RBY1_DISABLE_PERTURB", "0").strip().lower()
-    return value not in {"1", "true", "yes", "on"}
-
-
 def _make_rby1_perturb_rng():
     rng_state = np.random.get_state()
-    seed_value = os.getenv("RBY1_PERTURB_SEED")
-    if seed_value is not None:
-        try:
-            rng = np.random.RandomState(int(seed_value))
-        except ValueError:
-            rng = np.random.RandomState()
-            rng.set_state(rng_state)
-    else:
-        rng = np.random.RandomState()
-        rng.set_state(rng_state)
+    rng = np.random.RandomState()
+    rng.set_state(rng_state)
     return rng, rng_state
 
 
@@ -487,6 +472,7 @@ class RBY1(Robot):
         base_perturb_yaw_range: tuple[float, float] | float | None = None,
         ee_perturb_pos_range: tuple[float, float] | float | None = None,
         ee_perturb_rot_range: tuple[float, float] | float | None = None,
+        init_perturb: bool = False,
     ):
         """Initialize RBY1 robot with mocap base control."""
         self._base_perturb_x_range = _parse_range(
@@ -510,7 +496,7 @@ class RBY1(Robot):
             "ee_perturb_rot_range",
         )
 
-        super().__init__(action_mode, mojo)
+        super().__init__(action_mode, mojo, init_perturb=init_perturb)
         
         # Fix limb_actuators for RBY1 with namespace
         # This is needed for custom action modes that don't populate limb_actuators
@@ -610,7 +596,7 @@ class RBY1(Robot):
     def reset(self, position: np.ndarray, orientation: np.ndarray):
         super().reset(position, orientation)
         _apply_head_default_posture(self._mojo)
-        if _rby1_perturb_enabled():
+        if self._init_perturb:
             rng, rng_state = _make_rby1_perturb_rng()
             try:
                 _perturb_rby1_base(
@@ -648,6 +634,7 @@ class RBY1FineManipulation(Robot):
         base_perturb_yaw_range: tuple[float, float] | float | None = None,
         ee_perturb_pos_range: tuple[float, float] | float | None = None,
         ee_perturb_rot_range: tuple[float, float] | float | None = None,
+        init_perturb: bool = False,
     ):
         """Initialize RBY1 robot with mocap base control."""
         self._base_perturb_x_range = _parse_range(
@@ -673,7 +660,7 @@ class RBY1FineManipulation(Robot):
 
         # Set desired scale before loading
         self._model_scale = 1.3
-        super().__init__(action_mode, mojo)
+        super().__init__(action_mode, mojo, init_perturb=init_perturb)
         
         # Fix limb_actuators for RBY1 with namespace
         self._fix_limb_actuators()
@@ -817,7 +804,7 @@ class RBY1FineManipulation(Robot):
     def reset(self, position: np.ndarray, orientation: np.ndarray):
         super().reset(position, orientation)
         _apply_head_default_posture(self._mojo)
-        if _rby1_perturb_enabled():
+        if self._init_perturb:
             rng, rng_state = _make_rby1_perturb_rng()
             try:
                 _perturb_rby1_base(

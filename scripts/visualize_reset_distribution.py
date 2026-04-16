@@ -40,21 +40,6 @@ def _resolve_env_class(env: str):
     return getattr(module, env)
 
 
-def _configure_perturb_flags(enable_env_perturb: bool, enable_robot_perturb: bool):
-    if enable_env_perturb:
-        os.environ.pop("BIGYM_DISABLE_PERTURB", None)
-    else:
-        os.environ["BIGYM_DISABLE_PERTURB"] = "1"
-
-    if enable_robot_perturb:
-        os.environ.pop("RBY1_DISABLE_PERTURB", None)
-    else:
-        os.environ["RBY1_DISABLE_PERTURB"] = "1"
-
-    # If this stays set, robot perturbation can be identical every reset.
-    os.environ.pop("RBY1_PERTURB_SEED", None)
-
-
 def _to_rgb_frame(frame):
     import numpy as np
 
@@ -169,14 +154,10 @@ def parse_args() -> argparse.Namespace:
         help="If set, use seed=seed_base+i for reset i.",
     )
     parser.add_argument(
-        "--disable-env-perturb",
-        action="store_true",
-        help="Disable environment perturbation (BIGYM).",
-    )
-    parser.add_argument(
-        "--disable-robot-perturb",
-        action="store_true",
-        help="Disable robot perturbation (RBY1).",
+        "--init-perturb",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Enable or disable init perturbation (default: disabled).",
     )
     parser.add_argument(
         "--output-gif",
@@ -255,11 +236,6 @@ def parse_args() -> argparse.Namespace:
 
 def main():
     args = parse_args()
-    _configure_perturb_flags(
-        enable_env_perturb=not args.disable_env_perturb,
-        enable_robot_perturb=not args.disable_robot_perturb,
-    )
-
     env_cls = _resolve_env_class(args.env)
     action_mode = RBY1CartesianActionModeWholeBody(
         direct_mode=False,
@@ -273,13 +249,12 @@ def main():
         control_frequency=args.control_frequency,
         render_mode=render_mode,
         robot_cls=RBY1,
+        init_perturb=args.init_perturb,
     )
 
     print(
         f"[reset-viz] env={env_cls.__name__}, interval={args.interval}s, "
-        f"BIGYM_DISABLE_PERTURB={os.getenv('BIGYM_DISABLE_PERTURB', '0')}, "
-        f"RBY1_DISABLE_PERTURB={os.getenv('RBY1_DISABLE_PERTURB', '0')}, "
-        f"RBY1_PERTURB_SEED={os.getenv('RBY1_PERTURB_SEED', '<unset>')}"
+        f"init_perturb={args.init_perturb}"
     )
 
     reset_idx = 0

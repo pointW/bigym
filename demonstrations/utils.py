@@ -50,9 +50,7 @@ class Metadata:
     environment_data: EnvData
     seed: int
     package_versions: dict[str, str]
-    reset_perturb_enabled: Optional[bool] = None
-    bigym_reset_perturb_enabled: Optional[bool] = None
-    rby1_reset_perturb_enabled: Optional[bool] = None
+    init_perturb_enabled: Optional[bool] = None
     date: str = field(
         default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).strftime(
             "%Y-%m-%d_%H-%M-%S"
@@ -66,6 +64,11 @@ class Metadata:
         with safe_open(demo_path, framework="np", device="cpu") as f:
             metadata = f.metadata() or {}
         metadata = decode_safetensors_metadata(metadata)
+        if (
+            metadata.get("init_perturb_enabled") is None
+            and metadata.get("reset_perturb_enabled") is not None
+        ):
+            metadata["init_perturb_enabled"] = metadata["reset_perturb_enabled"]
         metadata["observation_mode"] = ObservationMode(metadata["observation_mode"])
         metadata["environment_data"] = EnvData.from_safetensors_metadata(
             metadata["environment_data"]
@@ -135,17 +138,9 @@ class Metadata:
             "date": json.dumps(self.date),
             "uuid": json.dumps(self.uuid),
         }
-        if self.reset_perturb_enabled is not None:
-            metadata["reset_perturb_enabled"] = json.dumps(
-                bool(self.reset_perturb_enabled)
-            )
-        if self.bigym_reset_perturb_enabled is not None:
-            metadata["bigym_reset_perturb_enabled"] = json.dumps(
-                bool(self.bigym_reset_perturb_enabled)
-            )
-        if self.rby1_reset_perturb_enabled is not None:
-            metadata["rby1_reset_perturb_enabled"] = json.dumps(
-                bool(self.rby1_reset_perturb_enabled)
+        if self.init_perturb_enabled is not None:
+            metadata["init_perturb_enabled"] = json.dumps(
+                bool(self.init_perturb_enabled)
             )
         return metadata
 
@@ -196,12 +191,14 @@ class Metadata:
         self, control_frequency: int, render_mode: Optional[str] = None
     ) -> BiGymEnv:
         """Get environment based on metadata."""
+        init_perturb = bool(self.init_perturb_enabled)
         return self.env_cls(
             action_mode=self.get_action_mode(),
             observation_config=self.environment_data.observation_config,
             render_mode=render_mode,
             control_frequency=control_frequency,
             robot_cls=self.robot_cls,
+            init_perturb=init_perturb,
         )
 
     def get_action_mode(self) -> ActionMode:
