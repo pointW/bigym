@@ -291,6 +291,7 @@ def replay_until_success(
         observation_config=observation_config,
         render_mode=render_mode,
         robot_cls=demo.metadata.robot_cls,
+        init_perturb=False,
     )
 
     gif_key = f"rgb_{camera_name}"
@@ -353,81 +354,67 @@ def export_first_success(
     camera_name: str,
     resolution: tuple[int, int],
     gif_stride: int,
-    disable_perturb: bool,
     demo_store: DemoStore,
     camera_mode: str,
     camera_preset: str,
 ) -> dict[str, Any]:
-    prev_disable_perturb = os.getenv("BIGYM_DISABLE_PERTURB")
-    if disable_perturb:
-        os.environ["BIGYM_DISABLE_PERTURB"] = "1"
-    else:
-        os.environ.pop("BIGYM_DISABLE_PERTURB", None)
-
-    try:
-        demos = load_source_demos(env_name, control_frequency, demo_store)
-        for demo_idx, demo in enumerate(demos):
-            result = replay_until_success(
-                demo=demo,
-                control_frequency=control_frequency,
-                camera_name=camera_name,
-                resolution=resolution,
-                gif_stride=gif_stride,
-                capture_frames=False,
-                camera_mode="obs",
-                camera_preset=camera_preset,
+    demos = load_source_demos(env_name, control_frequency, demo_store)
+    for demo_idx, demo in enumerate(demos):
+        result = replay_until_success(
+            demo=demo,
+            control_frequency=control_frequency,
+            camera_name=camera_name,
+            resolution=resolution,
+            gif_stride=gif_stride,
+            capture_frames=False,
+            camera_mode="obs",
+            camera_preset=camera_preset,
+        )
+        print(
+            f"[{env_name}] demo {demo_idx + 1}/{len(demos)} seed={int(demo.seed)}:"
+            f" success={result['success']}"
+            + (
+                f" step={result['success_step']}"
+                if result["success_step"] is not None
+                else f" max_reward={result['max_reward']:.3f}"
             )
-            print(
-                f"[{env_name}] demo {demo_idx + 1}/{len(demos)} seed={int(demo.seed)}:"
-                f" success={result['success']}"
-                + (
-                    f" step={result['success_step']}"
-                    if result["success_step"] is not None
-                    else f" max_reward={result['max_reward']:.3f}"
-                )
+        )
+        if not result["success"]:
+            continue
+
+        render_result = replay_until_success(
+            demo=demo,
+            control_frequency=control_frequency,
+            camera_name=camera_name,
+            resolution=resolution,
+            gif_stride=gif_stride,
+            capture_frames=True,
+            camera_mode=camera_mode,
+            camera_preset=camera_preset,
+        )
+        if not render_result["success"]:
+            raise RuntimeError(
+                f"Success replay became inconsistent while rendering {env_name}"
             )
-            if not result["success"]:
-                continue
 
-            render_result = replay_until_success(
-                demo=demo,
-                control_frequency=control_frequency,
-                camera_name=camera_name,
-                resolution=resolution,
-                gif_stride=gif_stride,
-                capture_frames=True,
-                camera_mode=camera_mode,
-                camera_preset=camera_preset,
-            )
-            if not render_result["success"]:
-                raise RuntimeError(
-                    f"Success replay became inconsistent while rendering {env_name}"
-                )
+        view_tag = camera_name if camera_mode == "obs" else camera_preset
+        file_name = f"{env_name}_seed{int(demo.seed)}_{view_tag}.gif"
+        gif_path = output_dir / file_name
+        gif_fps = control_frequency / float(max(1, gif_stride))
+        save_gif(render_result["frames"], gif_path, fps=gif_fps)
+        return {
+            "env": env_name,
+            "seed": int(demo.seed),
+            "demo_index": demo_idx,
+            "success_step": int(render_result["success_step"]),
+            "camera": camera_name if camera_mode == "obs" else camera_preset,
+            "camera_mode": camera_mode,
+            "resolution": list(resolution),
+            "gif_stride": int(gif_stride),
+            "gif_path": str(gif_path),
+        }
 
-            view_tag = camera_name if camera_mode == "obs" else camera_preset
-            file_name = f"{env_name}_seed{int(demo.seed)}_{view_tag}.gif"
-            gif_path = output_dir / file_name
-            gif_fps = control_frequency / float(max(1, gif_stride))
-            save_gif(render_result["frames"], gif_path, fps=gif_fps)
-            return {
-                "env": env_name,
-                "seed": int(demo.seed),
-                "demo_index": demo_idx,
-                "success_step": int(render_result["success_step"]),
-                "camera": camera_name if camera_mode == "obs" else camera_preset,
-                "camera_mode": camera_mode,
-                "resolution": list(resolution),
-                "gif_stride": int(gif_stride),
-                "gif_path": str(gif_path),
-                "disable_perturb": bool(disable_perturb),
-            }
-
-        raise RuntimeError(f"No successful H1 demo found for {env_name}")
-    finally:
-        if prev_disable_perturb is None:
-            os.environ.pop("BIGYM_DISABLE_PERTURB", None)
-        else:
-            os.environ["BIGYM_DISABLE_PERTURB"] = prev_disable_perturb
+    raise RuntimeError(f"No successful H1 demo found for {env_name}")
 
 
 def export_seed_record(
@@ -438,63 +425,49 @@ def export_seed_record(
     camera_name: str,
     resolution: tuple[int, int],
     gif_stride: int,
-    disable_perturb: bool,
     demo_store: DemoStore,
     camera_mode: str,
     camera_preset: str,
 ) -> dict[str, Any]:
-    prev_disable_perturb = os.getenv("BIGYM_DISABLE_PERTURB")
-    if disable_perturb:
-        os.environ["BIGYM_DISABLE_PERTURB"] = "1"
-    else:
-        os.environ.pop("BIGYM_DISABLE_PERTURB", None)
+    demos = load_source_demos(env_name, control_frequency, demo_store)
+    target_demo_idx = None
+    target_demo = None
+    for demo_idx, demo in enumerate(demos):
+        if int(demo.seed) == int(seed):
+            target_demo_idx = demo_idx
+            target_demo = demo
+            break
+    if target_demo is None:
+        raise RuntimeError(f"Seed {seed} not found for {env_name}")
 
-    try:
-        demos = load_source_demos(env_name, control_frequency, demo_store)
-        target_demo_idx = None
-        target_demo = None
-        for demo_idx, demo in enumerate(demos):
-            if int(demo.seed) == int(seed):
-                target_demo_idx = demo_idx
-                target_demo = demo
-                break
-        if target_demo is None:
-            raise RuntimeError(f"Seed {seed} not found for {env_name}")
+    render_result = replay_until_success(
+        demo=target_demo,
+        control_frequency=control_frequency,
+        camera_name=camera_name,
+        resolution=resolution,
+        gif_stride=gif_stride,
+        capture_frames=True,
+        camera_mode=camera_mode,
+        camera_preset=camera_preset,
+    )
+    if not render_result["success"]:
+        raise RuntimeError(f"Seed {seed} did not replay successfully for {env_name}")
 
-        render_result = replay_until_success(
-            demo=target_demo,
-            control_frequency=control_frequency,
-            camera_name=camera_name,
-            resolution=resolution,
-            gif_stride=gif_stride,
-            capture_frames=True,
-            camera_mode=camera_mode,
-            camera_preset=camera_preset,
-        )
-        if not render_result["success"]:
-            raise RuntimeError(f"Seed {seed} did not replay successfully for {env_name}")
-
-        view_tag = camera_name if camera_mode == "obs" else camera_preset
-        gif_path = output_dir / f"{env_name}_seed{int(seed)}_{view_tag}.gif"
-        gif_fps = control_frequency / float(max(1, gif_stride))
-        save_gif(render_result["frames"], gif_path, fps=gif_fps)
-        return {
-            "env": env_name,
-            "seed": int(seed),
-            "demo_index": int(target_demo_idx),
-            "success_step": int(render_result["success_step"]),
-            "camera": camera_name if camera_mode == "obs" else camera_preset,
-            "camera_mode": camera_mode,
-            "resolution": list(resolution),
-            "gif_stride": int(gif_stride),
-            "gif_path": str(gif_path),
-            "disable_perturb": bool(disable_perturb),
-        }
-    finally:
-        if prev_disable_perturb is None:
-            os.environ.pop("BIGYM_DISABLE_PERTURB", None)
-        else:
-            os.environ["BIGYM_DISABLE_PERTURB"] = prev_disable_perturb
+    view_tag = camera_name if camera_mode == "obs" else camera_preset
+    gif_path = output_dir / f"{env_name}_seed{int(seed)}_{view_tag}.gif"
+    gif_fps = control_frequency / float(max(1, gif_stride))
+    save_gif(render_result["frames"], gif_path, fps=gif_fps)
+    return {
+        "env": env_name,
+        "seed": int(seed),
+        "demo_index": int(target_demo_idx),
+        "success_step": int(render_result["success_step"]),
+        "camera": camera_name if camera_mode == "obs" else camera_preset,
+        "camera_mode": camera_mode,
+        "resolution": list(resolution),
+        "gif_stride": int(gif_stride),
+        "gif_path": str(gif_path),
+    }
 
 
 def parse_args() -> argparse.Namespace:
@@ -528,12 +501,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=224)
     parser.add_argument("--height", type=int, default=224)
     parser.add_argument("--gif-stride", type=int, default=5)
-    parser.add_argument(
-        "--disable-perturb",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Replay with BIGYM_DISABLE_PERTURB=1 by default",
-    )
     parser.add_argument(
         "--manifest",
         type=Path,
@@ -576,7 +543,6 @@ def main() -> None:
                 camera_name=args.camera,
                 resolution=resolution,
                 gif_stride=args.gif_stride,
-                disable_perturb=bool(item.get("disable_perturb", args.disable_perturb)),
                 demo_store=demo_store,
                 camera_mode=args.camera_mode,
                 camera_preset=args.camera_preset,
@@ -593,7 +559,6 @@ def main() -> None:
                 camera_name=args.camera,
                 resolution=resolution,
                 gif_stride=args.gif_stride,
-                disable_perturb=args.disable_perturb,
                 demo_store=demo_store,
                 camera_mode=args.camera_mode,
                 camera_preset=args.camera_preset,

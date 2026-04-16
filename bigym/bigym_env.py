@@ -61,7 +61,7 @@ class BiGymEnv(gym.Env):
         start_seed: Optional[int] = None,
         control_frequency: int = CONTROL_FREQUENCY_MAX,
         robot_cls: Optional[Type[Robot]] = None,
-        robot_kwargs: Optional[dict[str, Any]] = None,
+        init_perturb: Optional[bool] = None,
         reset_warmup_steps: Optional[int] = None,
     ):
         """Init.
@@ -77,7 +77,8 @@ class BiGymEnv(gym.Env):
             seed will be used.
         :param control_frequency: Control loop frequency, 500 Hz by default.
         :param robot_cls: Environment robot class override.
-        :param robot_kwargs: Optional kwargs forwarded to the robot constructor.
+        :param init_perturb: Explicit init perturb toggle. If None,
+            defaults to False.
         :param reset_warmup_steps: Number of passive warmup control steps to run
             after reset and before returning observations. If None, defaults to 55.
         """
@@ -104,14 +105,21 @@ class BiGymEnv(gym.Env):
         self._sub_steps_count = int(
             np.round(CONTROL_FREQUENCY_MAX / self._control_frequency)
         )
+        self._init_perturb = bool(init_perturb)
         self._reset_warmup_steps = self._validate_reset_warmup_steps(
             reset_warmup_steps, default=55
         )
 
         self._mojo = Mojo(str(self._MODEL_PATH), timestep=PHYSICS_DT)
-        robot_kwargs = robot_kwargs or {}
-        self._robot = (robot_cls or self.DEFAULT_ROBOT)(
-            self.action_mode, self._mojo, **robot_kwargs
+        selected_robot_cls = robot_cls or self.DEFAULT_ROBOT
+        robot_init_overrides = dict(
+            self._default_robot_init_overrides(selected_robot_cls) or {}
+        )
+        self._robot = selected_robot_cls(
+            self.action_mode,
+            self._mojo,
+            init_perturb=self._init_perturb,
+            **robot_init_overrides,
         )
         self._preset = Preset(self._mojo, self._PRESET_PATH)
         self._initialize_env()
@@ -148,6 +156,12 @@ class BiGymEnv(gym.Env):
         self._initialize_renderers()
         self._rby1_head_site_id: Optional[int] = None
         self._rby1_base_body_id: Optional[int] = None
+
+    def _default_robot_init_overrides(
+        self, robot_cls: Optional[Type[Robot]]
+    ) -> dict[str, Any]:
+        """Return task-specific robot constructor kwargs."""
+        return {}
 
     @property
     def task_name(self) -> str:
@@ -219,6 +233,10 @@ class BiGymEnv(gym.Env):
     def floor(self) -> Geom:
         """Get environment floor."""
         return self._floor
+
+    def init_perturb_enabled(self) -> bool:
+        """Return whether init perturbation is enabled."""
+        return bool(self._init_perturb)
 
     @property
     def mojo(self) -> Mojo:

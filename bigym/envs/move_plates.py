@@ -1,6 +1,5 @@
 """Set of plate moving tasks."""
 from abc import ABC
-import os
 
 import numpy as np
 from gymnasium import spaces
@@ -28,14 +27,6 @@ TABLE_Z_BOUNDS = 0.1  # Table height jitter (meters)
 
 PLATE_OFFSET_POS = np.array([0, 0.01, 0])
 PLATE_OFFSET_ROT = Quaternion(axis=[1, 0, 0], degrees=-5).elements
-
-
-def _bigym_perturb_enabled() -> bool:
-    """Return True if Bigym task reset perturbation is enabled."""
-    value = os.getenv("BIGYM_DISABLE_PERTURB", "0").strip().lower()
-    return value not in {"1", "true", "yes", "on"}
-
-
 class _MovePlatesEnv(BiGymEnv, ABC):
     """Base plates environment."""
 
@@ -104,7 +95,7 @@ class _MovePlatesEnv(BiGymEnv, ABC):
         return np.random.choice(sites, size=len(self.plates), replace=False)
 
     def _on_reset(self):
-        if not _bigym_perturb_enabled():
+        if not self.init_perturb_enabled():
             offset = np.random.uniform(-LEGACY_RACK_BOUNDS, LEGACY_RACK_BOUNDS)
             self.rack_start.body.set_position(LEGACY_RACK_POSITION_LEFT + offset)
             offset = np.random.uniform(-LEGACY_RACK_BOUNDS, LEGACY_RACK_BOUNDS)
@@ -143,44 +134,22 @@ class _MovePlatesEnv(BiGymEnv, ABC):
 class MovePlate(_MovePlatesEnv):
     """Move one plate from one rack to another."""
 
-    def __init__(
-        self,
-        action_mode,
-        observation_config: ObservationConfig = ObservationConfig(),
-        render_mode=None,
-        start_seed=None,
-        control_frequency: int = CONTROL_FREQUENCY_MAX,
-        robot_cls=None,
-        robot_kwargs=None,
-    ):
-        resolved_robot_cls = robot_cls or self.DEFAULT_ROBOT
-        if robot_kwargs is None and getattr(resolved_robot_cls, "__name__", None) in {
-            "RBY1",
-            "RBY1FineManipulation",
-        }:
-            robot_kwargs = {
-                "base_perturb_x_range": (-0.1, 0.0),
-                "base_perturb_y_range": (-0.1, 0.1),
-                "base_perturb_yaw_range": (
-                    -np.deg2rad(20.0),
-                    np.deg2rad(20.0),
-                ),
-                "ee_perturb_pos_range": (-0.1, 0.1),
-                "ee_perturb_rot_range": (
-                    -np.deg2rad(20.0),
-                    np.deg2rad(20.0),
-                ),
-            }
-
-        super().__init__(
-            action_mode=action_mode,
-            observation_config=observation_config,
-            render_mode=render_mode,
-            start_seed=start_seed,
-            control_frequency=control_frequency,
-            robot_cls=robot_cls,
-            robot_kwargs=robot_kwargs,
-        )
+    def _default_robot_init_overrides(self, robot_cls):
+        if getattr(robot_cls, "__name__", None) not in {"RBY1", "RBY1FineManipulation"}:
+            return super()._default_robot_init_overrides(robot_cls)
+        return {
+            "base_perturb_x_range": (-0.1, 0.0),
+            "base_perturb_y_range": (-0.1, 0.1),
+            "base_perturb_yaw_range": (
+                -np.deg2rad(20.0),
+                np.deg2rad(20.0),
+            ),
+            "ee_perturb_pos_range": (-0.1, 0.1),
+            "ee_perturb_rot_range": (
+                -np.deg2rad(20.0),
+                np.deg2rad(20.0),
+            ),
+        }
 
     def _get_task_privileged_obs_space(self):
         return {
@@ -204,44 +173,22 @@ class MoveTwoPlates(_MovePlatesEnv):
 
     _PLATES_COUNT = 2
 
-    def __init__(
-        self,
-        action_mode,
-        observation_config: ObservationConfig = ObservationConfig(),
-        render_mode=None,
-        start_seed=None,
-        control_frequency: int = CONTROL_FREQUENCY_MAX,
-        robot_cls=None,
-        robot_kwargs=None,
-    ):
-        resolved_robot_cls = robot_cls or self.DEFAULT_ROBOT
-        if robot_kwargs is None and getattr(resolved_robot_cls, "__name__", None) in {
-            "RBY1",
-            "RBY1FineManipulation",
-        }:
-            robot_kwargs = {
-                "base_perturb_x_range": (-0.1, 0.0),
-                "base_perturb_y_range": (-0.1, 0.1),
-                "base_perturb_yaw_range": (
-                    -np.deg2rad(20.0),
-                    np.deg2rad(20.0),
-                ),
-                "ee_perturb_pos_range": (-0.1, 0.1),
-                "ee_perturb_rot_range": (
-                    -np.deg2rad(20.0),
-                    np.deg2rad(20.0),
-                ),
-            }
-
-        super().__init__(
-            action_mode=action_mode,
-            observation_config=observation_config,
-            render_mode=render_mode,
-            start_seed=start_seed,
-            control_frequency=control_frequency,
-            robot_cls=robot_cls,
-            robot_kwargs=robot_kwargs,
-        )
+    def _default_robot_init_overrides(self, robot_cls):
+        if getattr(robot_cls, "__name__", None) not in {"RBY1", "RBY1FineManipulation"}:
+            return super()._default_robot_init_overrides(robot_cls)
+        return {
+            "base_perturb_x_range": (-0.1, 0.0),
+            "base_perturb_y_range": (-0.1, 0.1),
+            "base_perturb_yaw_range": (
+                -np.deg2rad(20.0),
+                np.deg2rad(20.0),
+            ),
+            "ee_perturb_pos_range": (-0.1, 0.1),
+            "ee_perturb_rot_range": (
+                -np.deg2rad(20.0),
+                np.deg2rad(20.0),
+            ),
+        }
 
     def _get_task_privileged_obs_space(self):
         return {}

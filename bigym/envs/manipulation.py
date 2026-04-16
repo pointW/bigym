@@ -1,7 +1,6 @@
 """Manipulation tasks."""
 from abc import ABC
 from functools import lru_cache
-import os
 from pathlib import Path
 
 import numpy as np
@@ -17,14 +16,6 @@ from bigym.envs.props.items import Cube
 from bigym.envs.props.kitchenware import Mug
 from bigym.robots.configs.h1 import H1FineManipulation
 from bigym.utils.env_utils import get_random_points_on_plane
-
-
-def _bigym_perturb_enabled() -> bool:
-    """Return True if task reset perturbation is enabled."""
-    value = os.getenv("BIGYM_DISABLE_PERTURB", "0").strip().lower()
-    return value not in {"1", "true", "yes", "on"}
-
-
 def _rotate_point_xy(point: np.ndarray, center: np.ndarray, yaw: float) -> np.ndarray:
     """Rotate a 3D point around `center` in XY plane by yaw radians."""
     cos_yaw = np.cos(yaw)
@@ -147,7 +138,7 @@ class FlipCup(_ManipulationEnv):
         return top_z - self._PCD_SURFACE_KEEP_EPS
 
     def _on_reset(self):
-        perturb_enabled = _bigym_perturb_enabled()
+        perturb_enabled = self.init_perturb_enabled()
         table_yaw_offset = 0.0
         # Keep original reset distribution when perturb is disabled.
         if not perturb_enabled:

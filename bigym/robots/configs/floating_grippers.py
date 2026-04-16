@@ -64,6 +64,7 @@ class FloatingGrippers(Robot):
         self,
         action_mode: ActionMode,
         mojo: Optional[Mojo] = None,
+        init_perturb: bool = False,
     ):
         """Initialize floating grippers robot.
         
@@ -83,7 +84,7 @@ class FloatingGrippers(Robot):
         self._mocap_bodies = {}  # Will store mocap body references
         
         # Initialize parent - this will load the model and call _on_loaded
-        super().__init__(action_mode, mojo)
+        super().__init__(action_mode, mojo, init_perturb=init_perturb)
         
         # Remove the freejoint that was automatically added to the floating_grippers model
         # This prevents the dummy_base (pelvis) from falling due to gravity

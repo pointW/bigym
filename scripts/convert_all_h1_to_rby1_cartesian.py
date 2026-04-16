@@ -228,8 +228,6 @@ def _run_convert(
     log_path: Path,
 ) -> Tuple[int, float]:
     env = os.environ.copy()
-    env["RBY1_DISABLE_PERTURB"] = "1"
-    env["BIGYM_DISABLE_PERTURB"] = "1"
     env["MUJOCO_GL"] = "osmesa"
     env["BIGYM_CACHE_ROOT"] = str(paths.cache_root)
 

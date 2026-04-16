@@ -193,7 +193,6 @@ def load_step1_source_demos(env_name: str, control_frequency: int) -> tuple[type
 def replay_single_demo(
     env_name: str,
     control_frequency: int,
-    disable_perturb: bool,
     demo: Demo,
 ) -> tuple[int, bool, int, float]:
     env_class = get_environment_class(env_name)
@@ -205,13 +204,6 @@ def replay_single_demo(
         else bool(source_env_data.action_mode_absolute)
     )
     source_robot_cls = demo.metadata.robot_cls
-
-    prev_bigym_disable_perturb = os.getenv("BIGYM_DISABLE_PERTURB")
-    if disable_perturb:
-        os.environ["BIGYM_DISABLE_PERTURB"] = "1"
-    else:
-        os.environ.pop("BIGYM_DISABLE_PERTURB", None)
-
     env = env_class(
         action_mode=JointPositionActionMode(
             floating_base=source_env_data.floating_base,
@@ -222,6 +214,7 @@ def replay_single_demo(
         observation_config=ObservationConfig(cameras=[]),
         render_mode=None,
         robot_cls=source_robot_cls,
+        init_perturb=False,
     )
 
     success = False
@@ -246,10 +239,6 @@ def replay_single_demo(
                 break
     finally:
         env.close()
-        if prev_bigym_disable_perturb is None:
-            os.environ.pop("BIGYM_DISABLE_PERTURB", None)
-        else:
-            os.environ["BIGYM_DISABLE_PERTURB"] = prev_bigym_disable_perturb
 
     return int(demo.seed), success, success_step, max_reward
 
@@ -258,7 +247,6 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--env", type=str, default="MoveTwoPlates")
     parser.add_argument("--control-freq", type=int, default=20)
-    parser.add_argument("--disable-perturb", action="store_true")
     parser.add_argument("--processes", type=int, default=1)
     args = parser.parse_args()
 
@@ -267,7 +255,7 @@ def main() -> None:
     failures: list[tuple[int, float]] = []
     if args.processes <= 1:
         results = [
-            replay_single_demo(args.env, args.control_freq, args.disable_perturb, demo)
+            replay_single_demo(args.env, args.control_freq, demo)
             for demo in demos
         ]
     else:
@@ -277,7 +265,6 @@ def main() -> None:
                     replay_single_demo,
                     [args.env] * len(demos),
                     [args.control_freq] * len(demos),
-                    [args.disable_perturb] * len(demos),
                     demos,
                 )
             )
@@ -288,8 +275,7 @@ def main() -> None:
         else:
             failures.append((seed, max_reward))
 
-    mode = "no_perturb" if args.disable_perturb else "default"
-    print(f"\nMODE {mode}")
+    print("\nMODE no_perturb")
     print(
         f"total={len(demos)} success={len(successes)} "
         f"rate={(len(successes) / len(demos)) if demos else 0.0:.6f}"
