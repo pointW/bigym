@@ -404,7 +404,7 @@ def convert_h1_demo_to_rby1_cartesian(
     pcd_min_dist: Optional[float] = None,
     pcd_max_dist: Optional[float] = 3.0,
     pcd_min_world_z: Optional[float] = 0.01,
-    success_settle_steps: int = 50,
+    success_settle_steps: int = 0,
 ) -> Tuple[Demo, bool]:
     """Convert a single H1 joint demo to RBY1 Cartesian demo.
     
@@ -694,7 +694,7 @@ def convert_h1_demos_batch(
     pcd_min_dist: Optional[float] = None,
     pcd_max_dist: Optional[float] = 3.0,
     pcd_min_world_z: Optional[float] = 0.01,
-    success_settle_steps: int = 50,
+    success_settle_steps: int = 0,
 ) -> List[Demo]:
     """Convert a batch of H1 demonstrations to RBY1 Cartesian format.
     
@@ -1128,7 +1128,7 @@ def main():
     parser.add_argument(
         "--success-settle-steps",
         type=int,
-        default=50,
+        default=0,
         help="Number of non-recorded hold steps before success judgment (default: 50)"
     )
     args = parser.parse_args()
