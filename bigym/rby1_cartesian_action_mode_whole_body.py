@@ -120,7 +120,7 @@ class RBY1CartesianActionModeWholeBody(ActionMode):
             "interpolation_frequency": 50,
             "low_level_frequency": 1000,
             "low_pass_freq_hz": 0.0,
-            "runtime_hold_steps": 10,
+            "runtime_hold_steps": 0,
         },
     }
     
