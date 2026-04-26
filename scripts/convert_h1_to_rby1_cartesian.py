@@ -395,6 +395,7 @@ def convert_h1_demo_to_rby1_cartesian(
     control_frequency: int = 20,
     interpolation_frequency: int = 20,
     low_pass_freq_hz: float = 10.0,
+    runtime_hold_steps: Optional[int] = None,
     render_mode: Optional[str] = None,
     robot_type: str = "rby1",
     blend_steps: int = 0,
@@ -416,6 +417,7 @@ def convert_h1_demo_to_rby1_cartesian(
         control_frequency: Control frequency for the environment
         interpolation_frequency: IK/interpolation update frequency for RBY1
         low_pass_freq_hz: Low-pass cutoff for RBY1 command smoothing
+        runtime_hold_steps: Additional post-action physics steps for RBY1 controller
         render_mode: Render mode (None for headless)
         robot_type: Target robot type (should be "rby1")
         blend_steps: Number of initial steps to blend from perturbed pose
@@ -529,6 +531,7 @@ def convert_h1_demo_to_rby1_cartesian(
             control_frequency=control_frequency,
             interpolation_frequency=interpolation_frequency,
             low_pass_freq_hz=low_pass_freq_hz,
+            runtime_hold_steps=runtime_hold_steps,
         ),
         control_frequency=control_frequency,
         observation_config=ObservationConfig(cameras=camera_configs),
@@ -610,18 +613,16 @@ def _convert_demo_worker(
         int,
         int,
         float,
+        Optional[int],
         Optional[str],
         str,
         int,
         Optional[int],
-        Optional[int],
-        bool,
         bool,
         int,
         Optional[float],
         Optional[float],
         Optional[float],
-        int,
         int,
     ]
 ) -> Tuple[int, bool, Optional[Demo], Optional[str]]:
@@ -634,6 +635,7 @@ def _convert_demo_worker(
         control_frequency,
         interpolation_frequency,
         low_pass_freq_hz,
+        runtime_hold_steps,
         render_mode,
         robot_type,
         blend_steps,
@@ -655,6 +657,7 @@ def _convert_demo_worker(
             control_frequency,
             interpolation_frequency,
             low_pass_freq_hz,
+            runtime_hold_steps,
             render_mode,
             robot_type,
             blend_steps=blend_steps,
@@ -680,6 +683,7 @@ def convert_h1_demos_batch(
     control_frequency: int = 20,
     interpolation_frequency: int = 20,
     low_pass_freq_hz: float = 10.0,
+    runtime_hold_steps: Optional[int] = None,
     render_mode: Optional[str] = None,
     robot_type: str = "rby1",
     blend_steps: int = 0,
@@ -707,6 +711,7 @@ def convert_h1_demos_batch(
         control_frequency: Control frequency
         interpolation_frequency: IK/interpolation update frequency for RBY1
         low_pass_freq_hz: Low-pass cutoff for RBY1 command smoothing
+        runtime_hold_steps: Additional post-action physics steps for RBY1 controller
         render_mode: Render mode for conversion
         robot_type: Target robot type (default "rby1")
         blend_steps: Number of initial steps to blend from perturbed pose
@@ -865,6 +870,7 @@ def convert_h1_demos_batch(
                     control_frequency,
                     interpolation_frequency,
                     low_pass_freq_hz,
+                    runtime_hold_steps,
                     render_mode,
                     robot_type,
                     blend_steps,
@@ -917,15 +923,16 @@ def convert_h1_demos_batch(
             (
                 index,
                 original_demo,
-                _,
-                _,
-                _,
-                _,
-                _,
-                _,
-                _,
-                _,
-                _,
+                _payload_env_name,
+                _payload_camera_configs,
+                _payload_control_frequency,
+                _payload_interpolation_frequency,
+                _payload_low_pass_freq_hz,
+                _payload_runtime_hold_steps,
+                _payload_render_mode,
+                _payload_robot_type,
+                _payload_blend_steps,
+                _payload_blend_ori_steps,
                 with_pointcloud,
                 pcd_points,
                 pcd_min_dist,
@@ -942,6 +949,7 @@ def convert_h1_demos_batch(
                     control_frequency,
                     interpolation_frequency,
                     low_pass_freq_hz,
+                    runtime_hold_steps,
                     render_mode,
                     robot_type,
                     blend_steps=blend_steps,
@@ -1131,6 +1139,12 @@ def main():
         default=0,
         help="Number of non-recorded hold steps before success judgment (default: 50)"
     )
+    parser.add_argument(
+        "--runtime-hold-steps",
+        type=int,
+        default=None,
+        help="Additional post-action physics hold steps for the RBY1 controller",
+    )
     args = parser.parse_args()
     
     # Convert H1 demos to RBY1 Cartesian
@@ -1142,6 +1156,7 @@ def main():
         control_frequency=args.control_freq,
         interpolation_frequency=args.interpolation_frequency,
         low_pass_freq_hz=args.low_pass_freq_hz,
+        runtime_hold_steps=args.runtime_hold_steps,
         render_mode="human" if args.render else None,
         robot_type=args.robot,
         blend_steps=args.blend_steps,
