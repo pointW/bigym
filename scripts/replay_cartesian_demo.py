@@ -1,5 +1,6 @@
 """Replay Cartesian demonstrations in the environment.
 
+This is a manual visual inspection tool, not the exact parity gate.
 Similar to replay_demo.py but for Cartesian action space demonstrations.
 """
 import numpy as np
