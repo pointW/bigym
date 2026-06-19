@@ -21,8 +21,9 @@ def get_version(rel_path):
 
 
 core_requirements = [
-    # includes bugfix in mujoco_rendering
-    "gymnasium @ git+https://git@github.com/stepjam/Gymnasium.git@0.29.2",
+    # version pinned in the consumer env (gymnasium==1.2.3); leave unpinned
+    # so an already-installed gymnasium is accepted instead of force-reinstalled.
+    "gymnasium",
     # pyquaternion doesn't support 2.x yet
     "numpy==1.26.*",
     "safetensors==0.3.3",
@@ -34,7 +35,9 @@ core_requirements = [
     "pyquaternion",
     "mujoco_utils",
     "wget",
-    "mojo @ git+https://git@github.com/stepjam/mojo.git@0.1.1",
+    # mojo is installed from git by the consumer env; plain name here avoids a
+    # forced reinstall of the already-present build.
+    "mojo",
     "pyyaml",
     "dearpygui",
     "pyopenxr",
