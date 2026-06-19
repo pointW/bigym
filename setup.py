@@ -41,7 +41,12 @@ core_requirements = [
     "pyyaml",
     "dearpygui",
     "pyopenxr",
-    "mink"
+    # NOTE: mink (IK) is intentionally NOT a core dependency. mink requires
+    # mujoco>=3.3.6, so installing bigym with deps would force-upgrade the
+    # consumer env's pinned mujoco (recorded demos can break on a mujoco change,
+    # see above). Install it separately instead, e.g.
+    #   pip install --no-deps mink==1.1.0
+    # It is exposed as the "ik" extra for convenience.
 ]
 
 setuptools.setup(
@@ -65,5 +70,8 @@ setuptools.setup(
             "opencv-python",
             "matplotlib",
         ],
+        # IK backend. Pulls mujoco>=3.3.6; install with --no-deps if you must
+        # hold an older mujoco (see core_requirements note).
+        "ik": ["mink"],
     },
 )
