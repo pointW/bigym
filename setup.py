@@ -20,33 +20,30 @@ def get_version(rel_path):
         raise RuntimeError("Unable to find version string.")
 
 
+# Pins are exact and self-contained so `pip install bigym` works standalone,
+# without a pre-built consumer env. The versions match the MoF research env
+# (https://github.com/pointW/equidiff) so the two installs never conflict.
 core_requirements = [
-    # version pinned in the consumer env (gymnasium==1.2.3); leave unpinned
-    # so an already-installed gymnasium is accepted instead of force-reinstalled.
-    "gymnasium",
-    # pyquaternion doesn't support 2.x yet
+    # bigym runs against stock gymnasium 1.2.x (no stepjam fork needed).
+    "gymnasium==1.2.3",
+    # pyquaternion doesn't support numpy 2.x yet.
     "numpy==1.26.*",
-    "safetensors==0.3.3",
-    # WARNING: recorded demos might break when updating Mujoco
-    "mujoco",
+    # demo (de)serialization. 0.7.x reads the recorded 0.3.x safetensors fine.
+    "safetensors==0.7.0",
+    # WARNING: recorded demos might replay differently if Mujoco changes, so the
+    # version is held. mink (IK, "ik" extra) wants mujoco>=3.3.6 and so is kept
+    # out of core to avoid force-upgrading this pin.
+    "mujoco==3.3.5",
     # needed for pyMJCF
-    "dm_control",
-    "imageio",
-    "pyquaternion",
-    "mujoco_utils",
-    "wget",
-    # mojo is installed from git by the consumer env; plain name here avoids a
-    # forced reinstall of the already-present build.
-    "mojo",
-    "pyyaml",
-    "dearpygui",
-    "pyopenxr",
-    # NOTE: mink (IK) is intentionally NOT a core dependency. mink requires
-    # mujoco>=3.3.6, so installing bigym with deps would force-upgrade the
-    # consumer env's pinned mujoco (recorded demos can break on a mujoco change,
-    # see above). Install it separately instead, e.g.
-    #   pip install --no-deps mink==1.1.0
-    # It is exposed as the "ik" extra for convenience.
+    "dm_control==1.0.31",
+    "imageio==2.22.0",
+    "pyquaternion==0.9.9",
+    "mujoco_utils==0.0.6",
+    "wget==3.2",
+    # PyPI "mojo" is a different package (Modular's language); the env's bigym
+    # needs stepjam's mojo, which is only on git.
+    "mojo @ git+https://github.com/stepjam/mojo.git@0.1.1",
+    "pyyaml==6.0.3",
 ]
 
 setuptools.setup(
@@ -70,8 +67,12 @@ setuptools.setup(
             "opencv-python",
             "matplotlib",
         ],
-        # IK backend. Pulls mujoco>=3.3.6; install with --no-deps if you must
-        # hold an older mujoco (see core_requirements note).
-        "ik": ["mink"],
+        # IK backend. Pulls mujoco>=3.3.6, which would force-upgrade the core
+        # mujoco==3.3.5 pin; install with --no-deps if you must hold mujoco.
+        "ik": ["mink==1.1.0"],
+        # Desktop GUI tools (demo player/recorder under tools/).
+        "tools": ["dearpygui==2.3.1"],
+        # VR teleoperation viewer (vr/).
+        "vr": ["pyopenxr==1.1.5301"],
     },
 )
